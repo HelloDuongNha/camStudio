@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="vi" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f8f7fc" />
+    <meta name="description" content="Cam Virtual — không gian điều khiển nguồn camera và microphone cho thiết bị của bạn." />
+    <title>Cam Virtual Studio</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <svg class="icon-sprite" aria-hidden="true">
+      <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h8A2.5 2.5 0 0 1 17 7.5v.9l2.6-1.7A.9.9 0 0 1 21 7.45v9.1a.9.9 0 0 1-1.4.75L17 15.6v.9a2.5 2.5 0 0 1-2.5 2.5h-8A2.5 2.5 0 0 1 4 16.5v-9Z"/></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 15.25A3.25 3.25 0 0 0 15.25 12V6a3.25 3.25 0 0 0-6.5 0v6A3.25 3.25 0 0 0 12 15.25Zm-6.5-3.7a.75.75 0 0 1 1.5 0 5 5 0 0 0 10 0 .75.75 0 0 1 1.5 0 6.5 6.5 0 0 1-5.75 6.46V20h2.5a.75.75 0 0 1 0 1.5h-6.5a.75.75 0 0 1 0-1.5h2.5v-1.99A6.5 6.5 0 0 1 5.5 11.55Z"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><path d="M12 7.25A4.75 4.75 0 1 0 12 16.75 4.75 4.75 0 0 0 12 7.25Zm0-5.5a.75.75 0 0 1 .75.75V4a.75.75 0 0 1-1.5 0V2.5a.75.75 0 0 1 .75-.75Zm0 17.5a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V20a.75.75 0 0 1 .75-.75ZM2.5 11.25H4a.75.75 0 0 1 0 1.5H2.5a.75.75 0 0 1 0-1.5Zm17.5 0h1.5a.75.75 0 0 1 0 1.5H20a.75.75 0 0 1 0-1.5ZM5.28 4.22l1.06 1.06a.75.75 0 1 1-1.06 1.06L4.22 5.28a.75.75 0 0 1 1.06-1.06Zm12.38 12.38 1.06 1.06a.75.75 0 1 1-1.06 1.06l-1.06-1.06a.75.75 0 0 1 1.06-1.06Zm1.06-11.32-1.06 1.06a.75.75 0 0 1-1.06-1.06l1.06-1.06a.75.75 0 1 1 1.06 1.06ZM6.34 17.66l-1.06 1.06a.75.75 0 0 1-1.06-1.06l1.06-1.06a.75.75 0 1 1 1.06 1.06Z"/></symbol>
+      <symbol id="i-grid" viewBox="0 0 24 24"><path d="M4.75 3A1.75 1.75 0 0 0 3 4.75v4.5C3 10.22 3.78 11 4.75 11h4.5C10.22 11 11 10.22 11 9.25v-4.5C11 3.78 10.22 3 9.25 3h-4.5Zm10 0A1.75 1.75 0 0 0 13 4.75v4.5c0 .97.78 1.75 1.75 1.75h4.5C20.22 11 21 10.22 21 9.25v-4.5C21 3.78 20.22 3 19.25 3h-4.5Zm-10 10A1.75 1.75 0 0 0 3 14.75v4.5C3 20.22 3.78 21 4.75 21h4.5C10.22 21 11 20.22 11 19.25v-4.5C11 13.78 10.22 13 9.25 13h-4.5Zm10 0A1.75 1.75 0 0 0 13 14.75v4.5c0 .97.78 1.75 1.75 1.75h4.5C20.22 21 21 20.22 21 19.25v-4.5C21 13.78 20.22 13 19.25 13h-4.5Z"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8.2 5.25a1.5 1.5 0 0 1 2.25-1.3l9.1 5.25a1.5 1.5 0 0 1 0 2.6l-9.1 5.25a1.5 1.5 0 0 1-2.25-1.3V5.25Z"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M9.17 14.83a.75.75 0 0 1 0-1.06l4.6-4.6a.75.75 0 1 1 1.06 1.06l-4.6 4.6a.75.75 0 0 1-1.06 0Zm-3.71 3.71a4.5 4.5 0 0 1 0-6.36l2.12-2.12a4.5 4.5 0 0 1 5.97-.34.75.75 0 0 1-.94 1.17 3 3 0 0 0-3.97.23l-2.12 2.12a3 3 0 0 0 4.24 4.24l2.12-2.12a3 3 0 0 0 .23-3.97.75.75 0 1 1 1.17-.94 4.5 4.5 0 0 1-.34 5.97l-2.12 2.12a4.5 4.5 0 0 1-6.36 0Zm13.08-13.08a4.5 4.5 0 0 1 0 6.36l-2.12 2.12a4.5 4.5 0 0 1-5.97.34.75.75 0 1 1 .94-1.17 3 3 0 0 0 3.97-.23l2.12-2.12a3 3 0 0 0-4.24-4.24l-2.12 2.12a3 3 0 0 0-.23 3.97.75.75 0 0 1-1.17.94 4.5 4.5 0 0 1 .34-5.97l2.12-2.12a4.5 4.5 0 0 1 6.36 0Z"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m8.47 4.97 6.5 6.5a.75.75 0 0 1 0 1.06l-6.5 6.5a.75.75 0 0 1-1.06-1.06L13.38 12 7.41 6.03a.75.75 0 0 1 1.06-1.06Z"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M5.47 5.47a.75.75 0 0 1 1.06 0L12 10.94l5.47-5.47a.75.75 0 1 1 1.06 1.06L13.06 12l5.47 5.47a.75.75 0 0 1-1.06 1.06L12 13.06l-5.47 5.47a.75.75 0 0 1-1.06-1.06L10.94 12 5.47 6.53a.75.75 0 0 1 0-1.06Z"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M20.03 6.47a.75.75 0 0 1 0 1.06l-10 10a.75.75 0 0 1-1.06 0l-5-5a.75.75 0 0 1 1.06-1.06L9.5 15.94l9.47-9.47a.75.75 0 0 1 1.06 0Z"/></symbol>
+    </svg>
+
+    <header class="app-bar">
+      <a class="brand" href="#studio" aria-label="Cam Virtual — về Studio">
+        <span class="brand-mark"><svg><use href="#i-camera" /></svg></span>
+        <span><strong>Cam Virtual</strong><small>Studio</small></span>
+      </a>
+      <nav class="desktop-nav" aria-label="Điều hướng chính">
+        <a class="active" href="#studio">Studio</a>
+        <a href="#sources">Nguồn</a>
+        <a href="#activity">Hoạt động</a>
+      </nav>
+      <div class="bar-actions">
+        <span class="status-badge neutral" id="sessionBadge"><span></span>Chưa ghép nối</span>
+        <button class="icon-button" id="themeToggle" type="button" aria-label="Đổi giao diện sáng tối" title="Đổi giao diện">
+          <svg><use href="#i-sun" /></svg>
+        </button>
+        <button class="avatar-button" type="button" aria-label="Tài khoản demo">CV</button>
+      </div>
+    </header>
+
+    <main class="page-shell" id="studio">
+      <section class="hero-row">
+        <div>
+          <p class="eyebrow">Không gian điều khiển</p>
+          <h1>Studio của bạn</h1>
+          <p class="subtitle">Chuẩn bị nguồn hình và tiếng trước khi kết nối với điện thoại.</p>
+        </div>
+        <button class="button secondary catalog-trigger" type="button"><svg><use href="#i-grid" /></svg>Xem component</button>
+      </section>
+
+      <div class="studio-grid">
+        <section class="card preview-card" aria-labelledby="previewTitle">
+          <div class="card-heading">
+            <div>
+              <p class="section-kicker">Preview</p>
+              <h2 id="previewTitle">Khung hình đầu ra</h2>
+            </div>
+            <span class="status-badge success"><span></span>Sẵn sàng</span>
+          </div>
+
+          <div class="preview-stage" aria-label="Khung preview nguồn đang phát">
+            <video id="sourcePreview" autoplay muted playsinline hidden></video>
+            <canvas id="relayCanvas" width="640" height="360" hidden></canvas>
+            <div class="preview-grid-lines"></div>
+            <div class="preview-empty">
+              <span class="preview-icon"><svg><use href="#i-camera" /></svg></span>
+              <strong>Chưa có nội dung</strong>
+              <span>Chọn một nguồn để bắt đầu preview</span>
+            </div>
+            <span class="preview-label">16:9 · 1080p</span>
+          </div>
+
+          <div class="preview-toolbar">
+            <div class="segmented-control" aria-label="Chế độ khung hình">
+              <button class="selected" type="button" data-mode="Fit">Fit</button>
+              <button type="button" data-mode="Fill">Fill</button>
+              <button type="button" data-mode="Crop">Crop</button>
+            </div>
+            <button class="button ghost" type="button" id="resetFrame">Đặt lại khung</button>
+          </div>
+
+          <div class="control-grid">
+            <label class="range-field">
+              <span><b>Thu phóng</b><output id="zoomValue">100%</output></span>
+              <input id="zoomRange" type="range" min="50" max="200" value="100" />
+            </label>
+            <label class="range-field">
+              <span><b>Xoay</b><output id="rotateValue">0°</output></span>
+              <input id="rotateRange" type="range" min="-180" max="180" value="0" />
+            </label>
+          </div>
+        </section>
+
+        <aside class="side-stack" id="sources">
+          <section class="card source-card" aria-labelledby="sourceTitle">
+            <div class="card-heading compact">
+              <div>
+                <p class="section-kicker">Đầu vào</p>
+                <h2 id="sourceTitle">Chọn nguồn</h2>
+              </div>
+              <button class="icon-button" type="button" aria-label="Tùy chọn nguồn"><span class="more-icon">•••</span></button>
+            </div>
+
+            <div class="source-list" role="radiogroup" aria-label="Nguồn camera">
+              <button class="source-row selected" type="button" role="radio" aria-checked="true" data-source="Thư viện điện thoại">
+                <span class="source-symbol purple"><svg><use href="#i-play" /></svg></span>
+                <span class="source-copy"><strong>Thư viện điện thoại</strong><small>Video hoặc ảnh có sẵn</small></span>
+                <span class="radio-dot"></span>
+              </button>
+              <button class="source-row" id="computerSource" type="button" role="radio" aria-checked="false" data-source="Camera hoặc OBS trên máy tính">
+                <span class="source-symbol blue">OB</span>
+                <span class="source-copy"><strong>Camera / OBS trên máy tính</strong><small>Truyền thật qua mạng LAN</small></span>
+                <span class="radio-dot"></span>
+              </button>
+              <button class="source-row" type="button" role="radio" aria-checked="false" data-source="Kết nối gần">
+                <span class="source-symbol green"><svg><use href="#i-link" /></svg></span>
+                <span class="source-copy"><strong>Kết nối gần</strong><small>LAN hoặc USB tether</small></span>
+                <span class="tag">Sắp có</span>
+              </button>
+            </div>
+            <div class="desktop-source-controls" id="desktopSourceControls" hidden>
+              <label class="text-field"><span>Nguồn hình</span><select id="videoDevice"><option value="">Tự động chọn</option></select></label>
+              <button class="button primary full" id="startRelay" type="button">Bật camera / OBS</button>
+              <p id="relayStatus" class="inline-status">Chưa phát dữ liệu.</p>
+            </div>
+          </section>
+
+          <section class="card connect-card" aria-labelledby="connectTitle">
+            <div class="connect-art"><span></span><svg><use href="#i-camera" /></svg></div>
+            <div>
+              <p class="section-kicker">Thiết bị</p>
+              <h2 id="connectTitle">Kết nối điện thoại</h2>
+              <p>Ghép nối an toàn để sử dụng nguồn này trong CamPOC.</p>
+            </div>
+            <button class="button primary full" id="pairButton" type="button">Tạo mã ghép nối</button>
+          </section>
+        </aside>
+      </div>
+
+      <section class="permissions-section" id="activity" aria-labelledby="permissionTitle">
+        <div class="section-heading">
+          <div><p class="section-kicker">Quyền truy cập</p><h2 id="permissionTitle">Thiết bị trên trình duyệt này</h2></div>
+          <span class="helper-text">Bạn luôn kiểm soát quyền được dùng</span>
+        </div>
+        <div class="permission-grid">
+          <article class="permission-row">
+            <span class="source-symbol purple"><svg><use href="#i-camera" /></svg></span>
+            <span><strong>Camera</strong><small>Chưa yêu cầu quyền</small></span>
+            <button class="button tertiary permission-button" type="button" data-permission="Camera">Kiểm tra</button>
+          </article>
+          <article class="permission-row">
+            <span class="source-symbol coral"><svg><use href="#i-mic" /></svg></span>
+            <span><strong>Microphone</strong><small>Chưa yêu cầu quyền</small></span>
+            <button class="button tertiary permission-button" type="button" data-permission="Microphone">Kiểm tra</button>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Điều hướng di động">
+      <a class="active" href="#studio"><svg><use href="#i-grid" /></svg><span>Studio</span></a>
+      <a href="#sources"><svg><use href="#i-play" /></svg><span>Nguồn</span></a>
+      <button class="catalog-trigger" type="button"><svg><use href="#i-sun" /></svg><span>Giao diện</span></button>
+    </nav>
+
+    <div class="sheet-backdrop" id="sheetBackdrop" hidden></div>
+    <section class="bottom-sheet" id="componentSheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" hidden>
+      <div class="sheet-handle"></div>
+      <header class="sheet-header">
+        <div><p class="section-kicker">Design system</p><h2 id="sheetTitle">Trạng thái component</h2></div>
+        <button class="icon-button" id="closeSheet" type="button" aria-label="Đóng"><svg><use href="#i-x" /></svg></button>
+      </header>
+      <div class="component-catalog">
+        <div class="catalog-group"><h3>Button</h3><div class="component-row"><button class="button primary">Primary</button><button class="button secondary">Secondary</button><button class="button ghost">Ghost</button><button class="button primary" disabled>Disabled</button><button class="button primary loading" aria-label="Đang tải"><span></span>Đang tải</button></div></div>
+        <div class="catalog-group"><h3>Text field</h3><div class="component-row fields"><label class="text-field"><span>Tên phiên</span><input value="Studio của tôi" /></label><label class="text-field error"><span>Mã kết nối</span><input value="12" aria-invalid="true" /><small>Mã cần có 6 ký tự</small></label></div></div>
+        <div class="catalog-group"><h3>System states</h3><div class="state-grid"><div class="state-card empty"><svg><use href="#i-camera" /></svg><strong>Chưa có nguồn</strong><span>Thêm nguồn để bắt đầu</span></div><div class="state-card loading-state"><i></i><strong>Đang kết nối</strong><span>Vui lòng chờ trong giây lát</span></div><div class="state-card error-state"><b>!</b><strong>Mất kết nối</strong><span>Kiểm tra mạng và thử lại</span></div></div></div>
+      </div>
+    </section>
+
+    <section class="bottom-sheet pairing-sheet" id="pairingSheet" role="dialog" aria-modal="true" aria-labelledby="pairingTitle" hidden>
+      <div class="sheet-handle"></div>
+      <header class="sheet-header">
+        <div><p class="section-kicker">Ghép nối an toàn</p><h2 id="pairingTitle">Kết nối CamPOC</h2></div>
+        <button class="icon-button" id="closePairing" type="button" aria-label="Đóng"><svg><use href="#i-x" /></svg></button>
+      </header>
+      <div class="pairing-layout">
+        <div class="qr-panel">
+          <div class="qr-code" id="qrCode" aria-label="Mã QR ghép nối CamPOC"></div>
+          <span class="status-badge success"><span></span>Mã đang hoạt động</span>
+        </div>
+        <div class="pairing-copy">
+          <p>Trên điện thoại, mở CamPOC rồi chọn <strong>Quét mã ghép nối</strong>. Không chia sẻ mã này với người khác.</p>
+          <div class="pair-code-block">
+            <span>Mã nhập trên điện thoại</span>
+            <strong id="pairingCode">••••••</strong>
+          </div>
+          <div class="expiry-row"><span>Hết hạn sau</span><strong id="pairingExpiry">10:00</strong></div>
+          <div class="pairing-actions">
+            <button class="button primary" id="copyPairing" type="button">Sao chép link</button>
+            <button class="button secondary" id="newPairing" type="button">Tạo mã mới</button>
+          </div>
+          <button class="button ghost danger-text" id="revokePairing" type="button">Thu hồi phiên này</button>
+          <p class="pairing-note">Điện thoại và máy tính phải cùng Wi-Fi/LAN. CamPOC chỉ báo đang nhận sau khi server trả lời và có frame thật.</p>
+        </div>
+      </div>
+    </section>
+
+    <div class="snackbar" id="snackbar" role="status" aria-live="polite" hidden>
+      <svg><use href="#i-check" /></svg><span id="snackbarText">Đã cập nhật</span><button type="button" id="snackbarAction">Đóng</button>
+    </div>
+
+    <script src="vendor/qrcode.js"></script>
+    <script src="app.js?v=pairing-code-1"></script>
+  </body>
+</html>
