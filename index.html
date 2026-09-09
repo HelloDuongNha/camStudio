@@ -194,9 +194,15 @@
         <div class="pairing-copy">
           <p>Trên điện thoại, mở CamPOC rồi chọn <strong>Quét mã ghép nối</strong>. Studio tự dùng Internet hoặc mạng gần phù hợp. Không chia sẻ mã này với người khác.</p>
           <div class="pair-code-block">
-            <span>Mã nhập trên điện thoại</span>
+            <span>Phòng LiveKit</span>
             <strong id="pairingCode">••••••</strong>
           </div>
+          <label class="pairing-link-field">
+            <span>Link ghép nối đầy đủ</span>
+            <textarea id="pairingLink" rows="3" readonly></textarea>
+          </label>
+          <p class="pairing-live-state" id="pairingLiveState">Đã có QR · chưa phát camera/mic</p>
+          <button class="button primary full-width" id="startPairingSource" type="button">Bắt đầu phát camera + mic</button>
           <div class="expiry-row"><span>Hết hạn sau</span><strong id="pairingExpiry">10:00</strong></div>
           <div class="pairing-actions">
             <button class="button primary" id="copyPairing" type="button">Sao chép link</button>
@@ -214,6 +220,6 @@
 
     <script src="vendor/qrcode.js"></script>
     <script src="vendor/livekit-client.umd.js"></script>
-    <script src="app.js?v=remote-livekit-1"></script>
+    <script src="app.js?v=remote-livekit-2"></script>
   </body>
 </html>

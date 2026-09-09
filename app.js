@@ -242,6 +242,7 @@ function renderPairing(session) {
   qr.make();
   document.querySelector('#qrCode').innerHTML = qr.createSvgTag({ cellSize: 5, margin: 0, scalable: true });
   document.querySelector('#pairingCode').textContent = session.pairCode;
+  document.querySelector('#pairingLink').value = uri;
   const badge = document.querySelector('#sessionBadge');
   badge.classList.add('success');
   badge.innerHTML = `<span></span>Phiên ${session.room}`;
@@ -260,6 +261,27 @@ function renderPairing(session) {
   };
   tick();
   expiryTimer = window.setInterval(tick, 1000);
+}
+
+function setPairingLiveState(message, live = false) {
+  const state = document.querySelector('#pairingLiveState');
+  state.textContent = message;
+  state.classList.toggle('live', live);
+}
+
+function hasLiveSource() {
+  return Boolean(activeStream?.getVideoTracks().some((track) => track.readyState === 'live'));
+}
+
+function publishCurrentSource(session) {
+  if (!hasLiveSource()) {
+    setPairingLiveState('Đã có QR · bấm “Bắt đầu phát camera + mic” trước khi mở camera trên điện thoại');
+    return;
+  }
+  const generation = ++relayGeneration;
+  relayRunning = false;
+  setPairingLiveState('Đang nối camera/mic với phòng mới…');
+  void publishFrames(session, generation);
 }
 
 async function ensurePairingSession(forceNew = false) {
@@ -291,6 +313,9 @@ async function openPairing(forceNew = false) {
     const session = await ensurePairingSession(forceNew);
     renderPairing(session);
     setSheet(pairingSheet);
+    if (forceNew) publishCurrentSource(session);
+    else if (relayRunning && hasLiveSource()) setPairingLiveState('Camera + mic đang phát tới điện thoại', true);
+    else setPairingLiveState('Đã có QR · chưa phát camera/mic');
   } catch (error) {
     const message = error.message === 'access_key_required'
       ? 'Cần khóa truy cập Cam Studio để tạo phiên remote.'
@@ -330,6 +355,7 @@ document.querySelector('#newPairing').addEventListener('click', async () => {
   await openPairing(true);
   showSnackbar('Đã tạo mã mới; mã cũ không còn dùng trên web này');
 });
+document.querySelector('#startPairingSource').addEventListener('click', () => { void startDesktopSource(true); });
 document.querySelector('#revokePairing').addEventListener('click', () => revokePairing());
 document.querySelector('#copyPairing').addEventListener('click', async () => {
   const session = readPairingSession();
@@ -394,12 +420,15 @@ async function publishLiveKit(session, generation) {
   liveKitRoom = room;
   room.on(window.LivekitClient.RoomEvent.Reconnecting, () => {
     if (generation === relayGeneration) relayStatus.textContent = 'Mạng gián đoạn • đang tự kết nối lại…';
+    if (generation === relayGeneration) setPairingLiveState('Mạng gián đoạn · đang tự kết nối lại…');
   });
   room.on(window.LivekitClient.RoomEvent.Reconnected, () => {
     if (generation === relayGeneration) relayStatus.textContent = 'Đã nối lại • đang phát qua Internet';
+    if (generation === relayGeneration) setPairingLiveState('Camera + mic đang phát tới điện thoại', true);
   });
   room.on(window.LivekitClient.RoomEvent.Disconnected, () => {
     if (relayRunning && generation === relayGeneration) relayStatus.textContent = 'Đã mất kết nối remote.';
+    if (relayRunning && generation === relayGeneration) setPairingLiveState('Đã mất kết nối remote · hãy thử lại');
   });
   await room.connect(session.origin, session.publisherToken);
   if (generation !== relayGeneration) {
@@ -420,6 +449,7 @@ async function publishLiveKit(session, generation) {
     });
   }
   relayStatus.textContent = `Đang phát qua Internet • phòng ${session.room}`;
+  setPairingLiveState('Camera + mic đang phát tới điện thoại', true);
 }
 
 async function publishFrames(initialSession, generation) {
@@ -432,6 +462,7 @@ async function publishFrames(initialSession, generation) {
       await publishLiveKit(initialSession, generation);
     } catch (_) {
       if (generation === relayGeneration) relayStatus.textContent = 'Không kết nối được LiveKit • kiểm tra mạng và cấu hình.';
+      if (generation === relayGeneration) setPairingLiveState('Không phát được lên LiveKit · hãy thử lại');
     }
     return;
   }
@@ -475,7 +506,7 @@ async function publishFrames(initialSession, generation) {
   }
 }
 
-async function startDesktopSource() {
+async function startDesktopSource(showPairingAfter = false) {
   startRelay.disabled = true;
   startRelay.textContent = 'Đang mở nguồn…';
   try {
@@ -508,11 +539,15 @@ async function startDesktopSource() {
       : 'Nguồn đã mở; đang gửi frame đầu tiên qua LAN/USB tether…';
     startRelay.textContent = 'Đổi / khởi động lại nguồn';
     void publishFrames(session, generation);
+    if (showPairingAfter) setSheet(pairingSheet);
+    return true;
   } catch (error) {
     relayStatus.textContent = error.name === 'NotAllowedError'
       ? 'Bạn chưa cấp quyền camera cho trang này.'
       : 'Không mở được camera/OBS hoặc đường truyền.';
     startRelay.textContent = 'Thử lại';
+    setPairingLiveState('Chưa mở được camera/mic · kiểm tra quyền trình duyệt');
+    return false;
   } finally {
     startRelay.disabled = false;
   }
