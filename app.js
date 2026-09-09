@@ -11,6 +11,7 @@ let activeRelaySession;
 let relayRunning = false;
 let relayGeneration = 0;
 let publishedFrames = 0;
+let liveKitRoom;
 
 function showSnackbar(message) {
   window.clearTimeout(snackbarTimer);
@@ -117,10 +118,49 @@ async function fetchWithTimeout(input, init = {}, timeoutMs = REQUEST_TIMEOUT_MS
 
 async function getRelayInfo() {
   if (relayInfo) return relayInfo;
-  const response = await fetchWithTimeout('/api/info', { cache: 'no-store' });
-  if (!response.ok) throw new Error('relay_unavailable');
-  relayInfo = await response.json();
+  try {
+    const response = await fetchWithTimeout('/api/info', { cache: 'no-store' }, 1200);
+    if (!response.ok) throw new Error('relay_unavailable');
+    relayInfo = await response.json();
+  } catch (_) {
+    relayInfo = { transport: 'livekit-v2' };
+  }
   return relayInfo;
+}
+
+function studioAccessKey() {
+  let value = sessionStorage.getItem('camstudio-access-key') || '';
+  if (!value) {
+    value = window.prompt('Nhập khóa truy cập Cam Studio đã đặt trong Vercel')?.trim() || '';
+    if (value) sessionStorage.setItem('camstudio-access-key', value);
+  }
+  return value;
+}
+
+async function createRemoteSession() {
+  const accessKey = studioAccessKey();
+  if (!accessKey) throw new Error('access_key_required');
+  const response = await fetchWithTimeout('/api/session', {
+    method: 'POST',
+    headers: { 'X-CamStudio-Access-Key': accessKey },
+  }, 8000);
+  if (response.status === 401) {
+    sessionStorage.removeItem('camstudio-access-key');
+    throw new Error('access_denied');
+  }
+  if (!response.ok) throw new Error('remote_session_failed');
+  const remote = await response.json();
+  return {
+    version: remote.version,
+    transport: remote.transport,
+    room: remote.room,
+    token: remote.receiverToken,
+    publisherToken: remote.publisherToken,
+    expiresAt: remote.expires * 1000,
+    pairExpiresAt: remote.expires * 1000,
+    pairCode: 'QR / LINK',
+    origin: remote.livekitUrl,
+  };
 }
 
 function randomString(length, alphabet) {
@@ -135,6 +175,11 @@ function randomToken() {
 }
 
 async function registerPairingSession(session) {
+  if (session.transport === 'livekit') {
+    activeRelaySession = session;
+    localStorage.setItem(PAIRING_STORAGE_KEY, JSON.stringify(session));
+    return session;
+  }
   const response = await fetchWithTimeout('/api/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -156,6 +201,7 @@ async function registerPairingSession(session) {
 
 async function makePairingSession() {
   const info = await getRelayInfo();
+  if (info.transport === 'livekit-v2') return createRemoteSession();
   const session = {
     version: 1,
     room: randomString(6, ROOM_ALPHABET),
@@ -174,13 +220,14 @@ function pairingUri(session) {
     expires: String(Math.floor(session.expiresAt / 1000)),
     origin: session.origin,
   });
+  if (session.transport === 'livekit') query.set('transport', 'livekit');
   return `camvirtual://pair?${query.toString()}`;
 }
 
 function readPairingSession() {
   try {
     const session = JSON.parse(localStorage.getItem(PAIRING_STORAGE_KEY));
-    if (session?.version === 1 && session.expiresAt > Date.now()) return session;
+    if ((session?.version === 1 || session?.version === 2) && session.expiresAt > Date.now()) return session;
   } catch (_) {
     // Corrupt local state is treated as revoked.
   }
@@ -218,15 +265,20 @@ function renderPairing(session) {
 async function ensurePairingSession(forceNew = false) {
   if (forceNew) {
     const previous = readPairingSession();
-    if (previous) {
+    if (previous && previous.transport !== 'livekit') {
       await fetch(`/api/rooms/${previous.room}?token=${encodeURIComponent(previous.token)}`, {
         method: 'DELETE',
       }).catch(() => {});
+    }
+    if (liveKitRoom) {
+      await liveKitRoom.disconnect();
+      liveKitRoom = undefined;
     }
     return makePairingSession();
   }
   const existing = readPairingSession();
   if (existing) {
+    if (existing.transport === 'livekit') return registerPairingSession(existing);
     const info = await getRelayInfo();
     existing.origin = info.receiverOrigin;
     return registerPairingSession(existing);
@@ -239,20 +291,29 @@ async function openPairing(forceNew = false) {
     const session = await ensurePairingSession(forceNew);
     renderPairing(session);
     setSheet(pairingSheet);
-  } catch (_) {
-    showSnackbar('Không khởi tạo được server truyền LAN. Hãy chạy npm start.');
+  } catch (error) {
+    const message = error.message === 'access_key_required'
+      ? 'Cần khóa truy cập Cam Studio để tạo phiên remote.'
+      : error.message === 'access_denied'
+        ? 'Khóa truy cập Cam Studio không đúng.'
+        : 'Không tạo được phiên remote. Kiểm tra cấu hình LiveKit trên Vercel.';
+    showSnackbar(message);
   }
 }
 
 function revokePairing(message = 'Đã thu hồi phiên ghép nối') {
   const session = readPairingSession();
-  if (session) {
+  if (session && session.transport !== 'livekit') {
     fetch(`/api/rooms/${session.room}?token=${encodeURIComponent(session.token)}`, {
       method: 'DELETE',
     }).catch(() => {});
   }
   relayRunning = false;
   relayGeneration += 1;
+  if (liveKitRoom) {
+    void liveKitRoom.disconnect();
+    liveKitRoom = undefined;
+  }
   activeRelaySession = undefined;
   localStorage.removeItem(PAIRING_STORAGE_KEY);
   window.clearInterval(expiryTimer);
@@ -288,16 +349,23 @@ const videoPreview = document.querySelector('#sourcePreview');
 const relayCanvas = document.querySelector('#relayCanvas');
 const relayStatus = document.querySelector('#relayStatus');
 const videoDevice = document.querySelector('#videoDevice');
+const audioDevice = document.querySelector('#audioDevice');
 const startRelay = document.querySelector('#startRelay');
 
-async function populateVideoDevices(selectedId = '') {
+async function populateDevices(selectedVideoId = '', selectedAudioId = '') {
   const devices = await navigator.mediaDevices.enumerateDevices();
   const cameras = devices.filter((device) => device.kind === 'videoinput');
+  const microphones = devices.filter((device) => device.kind === 'audioinput');
   videoDevice.replaceChildren(new Option('Tự động chọn', ''));
   cameras.forEach((camera, index) => {
     videoDevice.add(new Option(camera.label || `Camera ${index + 1}`, camera.deviceId));
   });
-  videoDevice.value = selectedId;
+  videoDevice.value = selectedVideoId;
+  audioDevice.replaceChildren(new Option('Tự động chọn', ''));
+  microphones.forEach((microphone, index) => {
+    audioDevice.add(new Option(microphone.label || `Microphone ${index + 1}`, microphone.deviceId));
+  });
+  audioDevice.value = selectedAudioId;
 }
 
 function frameBlob() {
@@ -315,11 +383,58 @@ async function recoverRelay(session) {
   await registerPairingSession(session);
 }
 
+async function publishLiveKit(session, generation) {
+  if (!window.LivekitClient) throw new Error('livekit_client_missing');
+  if (liveKitRoom) await liveKitRoom.disconnect();
+  const room = new window.LivekitClient.Room({
+    adaptiveStream: true,
+    dynacast: true,
+    disconnectOnPageLeave: true,
+  });
+  liveKitRoom = room;
+  room.on(window.LivekitClient.RoomEvent.Reconnecting, () => {
+    if (generation === relayGeneration) relayStatus.textContent = 'Mạng gián đoạn • đang tự kết nối lại…';
+  });
+  room.on(window.LivekitClient.RoomEvent.Reconnected, () => {
+    if (generation === relayGeneration) relayStatus.textContent = 'Đã nối lại • đang phát qua Internet';
+  });
+  room.on(window.LivekitClient.RoomEvent.Disconnected, () => {
+    if (relayRunning && generation === relayGeneration) relayStatus.textContent = 'Đã mất kết nối remote.';
+  });
+  await room.connect(session.origin, session.publisherToken);
+  if (generation !== relayGeneration) {
+    await room.disconnect();
+    return;
+  }
+  const videoTrack = activeStream?.getVideoTracks()[0];
+  const audioTrack = activeStream?.getAudioTracks()[0];
+  if (videoTrack) {
+    await room.localParticipant.publishTrack(videoTrack, {
+      source: window.LivekitClient.Track.Source.Camera,
+      simulcast: true,
+    });
+  }
+  if (audioTrack) {
+    await room.localParticipant.publishTrack(audioTrack, {
+      source: window.LivekitClient.Track.Source.Microphone,
+    });
+  }
+  relayStatus.textContent = `Đang phát qua Internet • phòng ${session.room}`;
+}
+
 async function publishFrames(initialSession, generation) {
   if (generation !== relayGeneration) return;
   activeRelaySession = initialSession;
   relayRunning = true;
   publishedFrames = 0;
+  if (initialSession.transport === 'livekit') {
+    try {
+      await publishLiveKit(initialSession, generation);
+    } catch (_) {
+      if (generation === relayGeneration) relayStatus.textContent = 'Không kết nối được LiveKit • kiểm tra mạng và cấu hình.';
+    }
+    return;
+  }
   let consecutiveFailures = 0;
   while (
     relayRunning && generation === relayGeneration && activeStream &&
@@ -367,26 +482,36 @@ async function startDesktopSource() {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error('media_unsupported');
     relayRunning = false;
     const generation = ++relayGeneration;
+    if (liveKitRoom) {
+      await liveKitRoom.disconnect();
+      liveKitRoom = undefined;
+    }
     activeStream?.getTracks().forEach((track) => track.stop());
-    const selectedId = videoDevice.value;
+    const selectedVideoId = videoDevice.value;
+    const selectedAudioId = audioDevice.value;
     activeStream = await navigator.mediaDevices.getUserMedia({
-      video: selectedId ? { deviceId: { exact: selectedId } } : true,
-      audio: false,
+      video: selectedVideoId ? { deviceId: { exact: selectedVideoId } } : true,
+      audio: selectedAudioId ? { deviceId: { exact: selectedAudioId } } : true,
     });
-    await populateVideoDevices(activeStream.getVideoTracks()[0]?.getSettings().deviceId || selectedId);
+    await populateDevices(
+      activeStream.getVideoTracks()[0]?.getSettings().deviceId || selectedVideoId,
+      activeStream.getAudioTracks()[0]?.getSettings().deviceId || selectedAudioId,
+    );
     videoPreview.srcObject = activeStream;
     videoPreview.hidden = false;
     document.querySelector('.preview-empty').hidden = true;
     await videoPreview.play();
     const session = await ensurePairingSession(false);
     renderPairing(session);
-    relayStatus.textContent = 'Nguồn đã mở; đang gửi frame đầu tiên…';
+    relayStatus.textContent = session.transport === 'livekit'
+      ? 'Nguồn đã mở; đang kết nối Internet…'
+      : 'Nguồn đã mở; đang gửi frame đầu tiên qua LAN/USB tether…';
     startRelay.textContent = 'Đổi / khởi động lại nguồn';
     void publishFrames(session, generation);
   } catch (error) {
     relayStatus.textContent = error.name === 'NotAllowedError'
       ? 'Bạn chưa cấp quyền camera cho trang này.'
-      : 'Không mở được camera/OBS hoặc relay LAN.';
+      : 'Không mở được camera/OBS hoặc đường truyền.';
     startRelay.textContent = 'Thử lại';
   } finally {
     startRelay.disabled = false;
@@ -403,5 +528,5 @@ document.querySelectorAll('.permission-button').forEach((button) => {
 
 const activeSession = readPairingSession();
 if (activeSession) {
-  ensurePairingSession(false).then(renderPairing).catch(() => revokePairing('Server LAN chưa hoạt động'));
+  ensurePairingSession(false).then(renderPairing).catch(() => revokePairing('Phiên cũ không còn hoạt động'));
 }

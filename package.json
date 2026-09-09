@@ -3,8 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "description": "Cam Virtual local media relay and control plane",
+  "type": "module",
   "scripts": {
     "start": "python3 server.py",
     "serve": "python3 server.py"
+  },
+  "dependencies": {
+    "livekit-client": "2.22.3",
+    "livekit-server-sdk": "2.19.0"
   }
 }
