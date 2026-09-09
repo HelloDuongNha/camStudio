@@ -5,8 +5,9 @@
   "description": "Cam Virtual local media relay and control plane",
   "type": "module",
   "scripts": {
-    "start": "python3 server.py",
-    "serve": "python3 server.py"
+    "start": "node server.js",
+    "lan": "python3 server.py",
+    "serve": "node server.js"
   },
   "dependencies": {
     "livekit-client": "2.22.3",

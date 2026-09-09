@@ -1,14 +1,27 @@
 # camStudio
 
-Studio phát camera/microphone từ trình duyệt máy tính sang VirtualCamPoC trên Android. Khi chạy trên Vercel, Studio dùng LiveKit Cloud để hoạt động qua Internet; khi chạy `npm start` trên máy tính, Studio vẫn dùng relay LAN/USB tethering để giảm độ trễ.
+Studio phát camera/microphone từ trình duyệt máy tính sang VirtualCamPoC trên Android. Khi chạy trên Render/Vercel, Studio dùng LiveKit Cloud để hoạt động qua Internet; khi chạy relay Python trên máy tính, Studio dùng LAN/USB tethering để giảm độ trễ.
 
 ## Chạy cục bộ
 
+Để dùng LiveKit giống production, cấu hình `.env` trong shell rồi chạy `npm start`. Để dùng relay LAN/USB cục bộ, chạy:
+
 ```bash
-npm start
+npm run lan
 ```
 
 Sau đó mở `http://localhost:4173`.
+
+## Deploy Render
+
+Phải tạo **Web Service**, không dùng Static Site vì `/api/session` cần chạy phía server.
+
+- Runtime: `Node`
+- Build Command: `npm ci`
+- Start Command: `npm start`
+- Health Check Path: `/healthz`
+
+Khai báo bốn biến môi trường `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` và `CAMSTUDIO_ACCESS_KEY`, sau đó deploy commit mới nhất. Repo có sẵn `render.yaml` nếu tạo dịch vụ bằng Blueprint.
 
 ## Deploy Vercel
 
@@ -28,7 +41,7 @@ Ba giá trị LiveKit chỉ tồn tại ở Vercel Function và không được 
 3. Trong VirtualCamPoC trên Android, quét QR hoặc dán toàn bộ link ghép nối.
 4. Chọn nguồn đã ghép làm nguồn đang chạy, rồi mở Cam Browser/WebTest.
 
-Studio tự chọn LiveKit trên Vercel và relay cục bộ khi chạy bằng `npm start`; người dùng không phải đổi chế độ thủ công.
+Studio tự chọn LiveKit trên Render/Vercel và relay cục bộ khi chạy bằng `npm run lan`; người dùng không phải đổi chế độ trong giao diện.
 
 ## Kiểm tra nhanh bằng UI
 

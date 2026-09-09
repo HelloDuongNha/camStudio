@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: cam-studio
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: CAMSTUDIO_ACCESS_KEY
+        sync: false

@@ -131,7 +131,7 @@ async function getRelayInfo() {
 function studioAccessKey() {
   let value = sessionStorage.getItem('camstudio-access-key') || '';
   if (!value) {
-    value = window.prompt('Nhập khóa truy cập Cam Studio đã đặt trong Vercel')?.trim() || '';
+    value = window.prompt('Nhập khóa truy cập Cam Studio đã đặt trên dịch vụ triển khai')?.trim() || '';
     if (value) sessionStorage.setItem('camstudio-access-key', value);
   }
   return value;
@@ -296,7 +296,7 @@ async function openPairing(forceNew = false) {
       ? 'Cần khóa truy cập Cam Studio để tạo phiên remote.'
       : error.message === 'access_denied'
         ? 'Khóa truy cập Cam Studio không đúng.'
-        : 'Không tạo được phiên remote. Kiểm tra cấu hình LiveKit trên Vercel.';
+        : 'Không tạo được phiên remote. Kiểm tra cấu hình LiveKit trên máy chủ.';
     showSnackbar(message);
   }
 }
