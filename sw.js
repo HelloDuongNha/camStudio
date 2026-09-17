@@ -1,4 +1,4 @@
-const CACHE_NAME = 'camstudio-shell-usb-near-1';
+const CACHE_NAME = 'camstudio-shell-usb-near-2';
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/vendor/qrcode.js', '/vendor/livekit-client.umd.js'];
 
 self.addEventListener('install', (event) => {
@@ -19,5 +19,11 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(fetch(event.request).catch(() => caches.match('/index.html')));
     return;
   }
-  event.respondWith(caches.match(event.request, { ignoreSearch: true }).then((cached) => cached || fetch(event.request)));
+  event.respondWith(fetch(event.request).then(async (response) => {
+    if (response.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.put(url.pathname, response.clone());
+    }
+    return response;
+  }).catch(() => caches.match(url.pathname)));
 });

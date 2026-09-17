@@ -155,7 +155,8 @@ async function fetchWithTimeout(input, init = {}, timeoutMs = REQUEST_TIMEOUT_MS
 async function getRelayInfo() {
   if (relayInfo) return relayInfo;
   try {
-    const response = await fetchWithTimeout(apiUrl('/api/info'), { cache: 'no-store' }, 1200);
+    // The first nearby request may pause for Chrome's Local Network Access permission prompt.
+    const response = await fetchWithTimeout(apiUrl('/api/info'), { cache: 'no-store' }, isUsbMode ? 30000 : 1200);
     if (!response.ok) throw new Error('relay_unavailable');
     relayInfo = await response.json();
     if (isUsbMode && relayInfo.transport !== 'lan-jpeg-v1') throw new Error('usb_relay_unavailable');
@@ -359,7 +360,7 @@ async function openPairing(forceNew = false) {
       ? 'Cần khóa truy cập Cam Studio để tạo phiên remote.'
       : error.message === 'access_denied'
         ? 'Khóa truy cập Cam Studio không đúng.'
-        : isUsbMode ? 'Không tạo được phiên USB. Kiểm tra server.py và adb reverse.' : 'Không tạo được phiên remote. Kiểm tra cấu hình LiveKit trên máy chủ.';
+        : isUsbMode ? 'Không nối được USB. Hãy cho phép Chrome truy cập mạng cục bộ, rồi kiểm tra server.py và adb reverse.' : 'Không tạo được phiên remote. Kiểm tra cấu hình LiveKit trên máy chủ.';
     showSnackbar(message);
   }
 }
