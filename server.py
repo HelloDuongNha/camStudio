@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 
 ROOT = Path(__file__).resolve().parent
-MAX_FRAME_BYTES = 2 * 1024 * 1024
+MAX_FRAME_BYTES = 8 * 1024 * 1024
 MAX_SESSION_SECONDS = 2 * 60 * 60
 PAIR_CODE_SECONDS = 5 * 60
 DISCOVERY_PORT = 4174

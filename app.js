@@ -104,7 +104,13 @@ const PAIRING_STORAGE_KEY = 'camvirtual-pairing-session-v1';
 const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const SESSION_LIFETIME_MS = 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 2500;
-const PUBLISH_INTERVAL_MS = 67;
+const outputResolution = document.querySelector('#outputResolution');
+const outputFps = document.querySelector('#outputFps');
+const previewResolution = document.querySelector('#previewResolution');
+const publishIntervalMs = () => 1000 / Number(outputFps.value || 30);
+[outputResolution, outputFps].forEach((control) => control.addEventListener('change', () => {
+  if (hasLiveSource()) showSnackbar('Bấm “Đổi / khởi động lại nguồn” để áp dụng chất lượng mới');
+}));
 
 async function fetchWithTimeout(input, init = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
@@ -399,7 +405,23 @@ function frameBlob() {
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
   context.drawImage(videoPreview, 0, 0, relayCanvas.width, relayCanvas.height);
-  return new Promise((resolve) => relayCanvas.toBlob(resolve, 'image/jpeg', 0.82));
+  return new Promise((resolve) => relayCanvas.toBlob(resolve, 'image/jpeg', 0.90));
+}
+
+function configureRelayCanvas(track) {
+  const settings = track.getSettings();
+  const sourceWidth = settings.width || videoPreview.videoWidth;
+  const sourceHeight = settings.height || videoPreview.videoHeight;
+  if (!sourceWidth || !sourceHeight) throw new Error('source_resolution_unavailable');
+  const profile = outputResolution.value;
+  const maxHeight = profile === 'source' ? Infinity : Number(profile);
+  const landscape = sourceWidth >= sourceHeight;
+  const maxWidth = landscape ? maxHeight * 16 / 9 : maxHeight;
+  const maxFrameHeight = landscape ? maxHeight : maxHeight * 16 / 9;
+  const scale = Math.min(1, maxWidth / sourceWidth, maxFrameHeight / sourceHeight);
+  relayCanvas.width = Math.max(2, Math.round(sourceWidth * scale / 2) * 2);
+  relayCanvas.height = Math.max(2, Math.round(sourceHeight * scale / 2) * 2);
+  previewResolution.textContent = `${sourceWidth}×${sourceHeight} → ${relayCanvas.width}×${relayCanvas.height} · ${Math.round(settings.frameRate || Number(outputFps.value))} fps`;
 }
 
 async function recoverRelay(session) {
@@ -499,7 +521,7 @@ async function publishFrames(initialSession, generation) {
       }
     }
     const elapsed = performance.now() - startedAt;
-    const retryDelay = consecutiveFailures ? 500 : Math.max(0, PUBLISH_INTERVAL_MS - elapsed);
+    const retryDelay = consecutiveFailures ? 500 : Math.max(0, publishIntervalMs() - elapsed);
     if (retryDelay > 0) {
       await new Promise((resolve) => window.setTimeout(resolve, retryDelay));
     }
@@ -520,8 +542,15 @@ async function startDesktopSource(showPairingAfter = false) {
     activeStream?.getTracks().forEach((track) => track.stop());
     const selectedVideoId = videoDevice.value;
     const selectedAudioId = audioDevice.value;
+    const maxHeight = outputResolution.value === 'source' ? 2160 : Number(outputResolution.value);
+    const desiredFps = Number(outputFps.value);
     activeStream = await navigator.mediaDevices.getUserMedia({
-      video: selectedVideoId ? { deviceId: { exact: selectedVideoId } } : true,
+      video: {
+        ...(selectedVideoId ? { deviceId: { exact: selectedVideoId } } : {}),
+        width: { ideal: Math.round(maxHeight * 16 / 9) },
+        height: { ideal: maxHeight },
+        frameRate: { ideal: desiredFps },
+      },
       audio: selectedAudioId ? { deviceId: { exact: selectedAudioId } } : true,
     });
     await populateDevices(
@@ -532,6 +561,7 @@ async function startDesktopSource(showPairingAfter = false) {
     videoPreview.hidden = false;
     document.querySelector('.preview-empty').hidden = true;
     await videoPreview.play();
+    configureRelayCanvas(activeStream.getVideoTracks()[0]);
     const session = await ensurePairingSession(false);
     renderPairing(session);
     relayStatus.textContent = session.transport === 'livekit'
