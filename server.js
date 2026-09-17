@@ -10,6 +10,7 @@ const publicFiles = new Set([
   '/app.js',
   '/index.html',
   '/styles.css',
+  '/sw.js',
   '/vendor/livekit-client.umd.js',
   '/vendor/qrcode.js',
 ]);
@@ -38,7 +39,7 @@ function serveFile(response, requestPath) {
     return false;
   }
   response.writeHead(200, {
-    'Cache-Control': publicPath === '/index.html' ? 'no-store' : 'public, max-age=3600',
+    'Cache-Control': publicPath === '/index.html' || publicPath === '/sw.js' ? 'no-store' : 'public, max-age=3600',
     'Content-Length': size,
     'Content-Type': contentTypes[extname(filePath)] || 'application/octet-stream',
     'X-Content-Type-Options': 'nosniff',

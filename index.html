@@ -111,13 +111,13 @@
               </button>
               <button class="source-row" id="computerSource" type="button" role="radio" aria-checked="false" data-source="Camera hoặc OBS trên máy tính">
                 <span class="source-symbol blue">OB</span>
-                <span class="source-copy"><strong>Camera / OBS trên máy tính</strong><small>Tự chọn Internet, LAN hoặc USB tether</small></span>
+                <span class="source-copy"><strong>Camera / OBS trên máy tính</strong><small>Phát từ xa qua Cloud</small></span>
                 <span class="radio-dot"></span>
               </button>
-              <button class="source-row" type="button" role="radio" aria-checked="false" data-source="Kết nối gần">
+              <button class="source-row" id="nearSource" type="button" role="radio" aria-checked="false" data-source="Kết nối gần">
                 <span class="source-symbol green"><svg><use href="#i-link" /></svg></span>
-                <span class="source-copy"><strong>Kết nối gần</strong><small>LAN hoặc USB tether</small></span>
-                <span class="tag">Tự động</span>
+                <span class="source-copy"><strong>Kết nối gần</strong><small>USB trực tiếp · không đi qua Cloud</small></span>
+                <span class="radio-dot"></span>
               </button>
             </div>
             <div class="desktop-source-controls" id="desktopSourceControls" hidden>
@@ -137,6 +137,7 @@
               <h2 id="connectTitle">Kết nối điện thoại</h2>
               <p>Ghép nối an toàn để sử dụng nguồn này trong CamPOC.</p>
             </div>
+            <p class="transport-hint" id="transportHint"></p>
             <button class="button primary full" id="pairButton" type="button">Tạo mã ghép nối</button>
           </section>
         </aside>
@@ -222,6 +223,6 @@
 
     <script src="vendor/qrcode.js"></script>
     <script src="vendor/livekit-client.umd.js"></script>
-    <script src="app.js?v=remote-livekit-2"></script>
+    <script src="app.js?v=usb-near-1"></script>
   </body>
 </html>

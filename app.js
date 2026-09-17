@@ -12,6 +12,21 @@ let relayRunning = false;
 let relayGeneration = 0;
 let publishedFrames = 0;
 let liveKitRoom;
+const USB_ORIGIN = 'http://127.0.0.1:4173';
+let isUsbMode = false;
+const apiUrl = (path) => isUsbMode ? `${USB_ORIGIN}${path}` : path;
+
+function updateTransportUi() {
+  document.querySelector('#transportHint').textContent = isUsbMode
+    ? 'USB trực tiếp đang chọn. Chạy start_usb_mode.sh trên máy tính rồi bật camera/OBS; QR sẽ nối qua cáp, không qua Render.'
+    : 'Camera / OBS từ xa phát qua Cloud Render / LiveKit.';
+  document.querySelector('#pairingTransportNote').textContent = isUsbMode
+    ? 'USB: quét QR trong CamPOC; mã chữ LAN không hoạt động qua cáp. Luồng này hiện chỉ truyền hình.'
+    : 'Cloud: phát camera và micro qua Render / LiveKit.';
+  const audioLabel = document.querySelector('#audioDevice')?.closest('label');
+  if (audioLabel) audioLabel.hidden = isUsbMode;
+}
+updateTransportUi();
 
 function showSnackbar(message) {
   window.clearTimeout(snackbarTimer);
@@ -66,13 +81,27 @@ document.querySelectorAll('.source-row').forEach((row) => {
       showSnackbar(`${row.dataset.source} sẽ được triển khai ở goal sau`);
       return;
     }
+    const nextUsbMode = row.id === 'nearSource';
+    if (nextUsbMode !== isUsbMode) {
+      if (readPairingSession()) revokePairing('Đã đổi đường truyền; tạo QR mới cho nguồn này');
+      relayRunning = false;
+      relayGeneration += 1;
+      activeStream?.getTracks().forEach((track) => track.stop());
+      activeStream = undefined;
+      relayInfo = undefined;
+      isUsbMode = nextUsbMode;
+      updateTransportUi();
+      document.querySelector('#sourcePreview').hidden = true;
+      document.querySelector('.preview-empty').hidden = false;
+      document.querySelector('#relayStatus').textContent = 'Chưa phát dữ liệu.';
+    }
     document.querySelectorAll('.source-row').forEach((item) => {
       item.classList.remove('selected');
       item.setAttribute('aria-checked', 'false');
     });
     row.classList.add('selected');
     row.setAttribute('aria-checked', 'true');
-    document.querySelector('#desktopSourceControls').hidden = row.id !== 'computerSource';
+    document.querySelector('#desktopSourceControls').hidden = row.id !== 'computerSource' && row.id !== 'nearSource';
     showSnackbar(`Đã chọn ${row.dataset.source}`);
   });
 });
@@ -101,6 +130,7 @@ document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && 
 document.querySelector('#snackbarAction').addEventListener('click', () => { snackbar.hidden = true; });
 
 const PAIRING_STORAGE_KEY = 'camvirtual-pairing-session-v1';
+const pairingStorageKey = () => isUsbMode ? `${PAIRING_STORAGE_KEY}-usb` : PAIRING_STORAGE_KEY;
 const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const SESSION_LIFETIME_MS = 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 2500;
@@ -125,10 +155,12 @@ async function fetchWithTimeout(input, init = {}, timeoutMs = REQUEST_TIMEOUT_MS
 async function getRelayInfo() {
   if (relayInfo) return relayInfo;
   try {
-    const response = await fetchWithTimeout('/api/info', { cache: 'no-store' }, 1200);
+    const response = await fetchWithTimeout(apiUrl('/api/info'), { cache: 'no-store' }, 1200);
     if (!response.ok) throw new Error('relay_unavailable');
     relayInfo = await response.json();
+    if (isUsbMode && relayInfo.transport !== 'lan-jpeg-v1') throw new Error('usb_relay_unavailable');
   } catch (_) {
+    if (isUsbMode) throw new Error('usb_relay_unavailable');
     relayInfo = { transport: 'livekit-v2' };
   }
   return relayInfo;
@@ -183,10 +215,10 @@ function randomToken() {
 async function registerPairingSession(session) {
   if (session.transport === 'livekit') {
     activeRelaySession = session;
-    localStorage.setItem(PAIRING_STORAGE_KEY, JSON.stringify(session));
+    localStorage.setItem(pairingStorageKey(), JSON.stringify(session));
     return session;
   }
-  const response = await fetchWithTimeout('/api/sessions', {
+  const response = await fetchWithTimeout(apiUrl('/api/sessions'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -197,11 +229,11 @@ async function registerPairingSession(session) {
   });
   if (!response.ok) throw new Error('session_registration_failed');
   const registered = await response.json();
-  session.origin = registered.receiverOrigin;
+  session.origin = isUsbMode ? USB_ORIGIN : registered.receiverOrigin;
   session.pairCode = registered.pairCode;
   session.pairExpiresAt = registered.pairExpires * 1000;
   activeRelaySession = session;
-  localStorage.setItem(PAIRING_STORAGE_KEY, JSON.stringify(session));
+  localStorage.setItem(pairingStorageKey(), JSON.stringify(session));
   return session;
 }
 
@@ -213,7 +245,7 @@ async function makePairingSession() {
     room: randomString(6, ROOM_ALPHABET),
     token: randomToken(),
     expiresAt: Date.now() + SESSION_LIFETIME_MS,
-    origin: info.receiverOrigin,
+    origin: isUsbMode ? USB_ORIGIN : info.receiverOrigin,
   };
   return registerPairingSession(session);
 }
@@ -232,12 +264,12 @@ function pairingUri(session) {
 
 function readPairingSession() {
   try {
-    const session = JSON.parse(localStorage.getItem(PAIRING_STORAGE_KEY));
+    const session = JSON.parse(localStorage.getItem(pairingStorageKey()));
     if ((session?.version === 1 || session?.version === 2) && session.expiresAt > Date.now()) return session;
   } catch (_) {
     // Corrupt local state is treated as revoked.
   }
-  localStorage.removeItem(PAIRING_STORAGE_KEY);
+  localStorage.removeItem(pairingStorageKey());
   return null;
 }
 
@@ -247,7 +279,7 @@ function renderPairing(session) {
   qr.addData(uri, 'Byte');
   qr.make();
   document.querySelector('#qrCode').innerHTML = qr.createSvgTag({ cellSize: 5, margin: 0, scalable: true });
-  document.querySelector('#pairingCode').textContent = session.pairCode;
+  document.querySelector('#pairingCode').textContent = isUsbMode ? 'Quét QR' : session.pairCode;
   document.querySelector('#pairingLink').value = uri;
   const badge = document.querySelector('#sessionBadge');
   badge.classList.add('success');
@@ -281,12 +313,12 @@ function hasLiveSource() {
 
 function publishCurrentSource(session) {
   if (!hasLiveSource()) {
-    setPairingLiveState('Đã có QR · bấm “Bắt đầu phát camera + mic” trước khi mở camera trên điện thoại');
+    setPairingLiveState('Đã có QR · bấm “Bật camera / OBS” trước khi mở camera trên điện thoại');
     return;
   }
   const generation = ++relayGeneration;
   relayRunning = false;
-  setPairingLiveState('Đang nối camera/mic với phòng mới…');
+  setPairingLiveState(isUsbMode ? 'Đang nối camera qua USB…' : 'Đang nối camera/mic với phòng mới…');
   void publishFrames(session, generation);
 }
 
@@ -294,7 +326,7 @@ async function ensurePairingSession(forceNew = false) {
   if (forceNew) {
     const previous = readPairingSession();
     if (previous && previous.transport !== 'livekit') {
-      await fetch(`/api/rooms/${previous.room}?token=${encodeURIComponent(previous.token)}`, {
+      await fetch(apiUrl(`/api/rooms/${previous.room}?token=${encodeURIComponent(previous.token)}`), {
         method: 'DELETE',
       }).catch(() => {});
     }
@@ -308,7 +340,7 @@ async function ensurePairingSession(forceNew = false) {
   if (existing) {
     if (existing.transport === 'livekit') return registerPairingSession(existing);
     const info = await getRelayInfo();
-    existing.origin = info.receiverOrigin;
+    existing.origin = isUsbMode ? USB_ORIGIN : info.receiverOrigin;
     return registerPairingSession(existing);
   }
   return makePairingSession();
@@ -320,14 +352,14 @@ async function openPairing(forceNew = false) {
     renderPairing(session);
     setSheet(pairingSheet);
     if (forceNew) publishCurrentSource(session);
-    else if (relayRunning && hasLiveSource()) setPairingLiveState('Camera + mic đang phát tới điện thoại', true);
-    else setPairingLiveState('Đã có QR · chưa phát camera/mic');
+    else if (relayRunning && hasLiveSource()) setPairingLiveState(isUsbMode ? 'Camera đang phát qua USB' : 'Camera + mic đang phát tới điện thoại', true);
+    else setPairingLiveState(isUsbMode ? 'Đã có QR · chưa phát camera' : 'Đã có QR · chưa phát camera/mic');
   } catch (error) {
     const message = error.message === 'access_key_required'
       ? 'Cần khóa truy cập Cam Studio để tạo phiên remote.'
       : error.message === 'access_denied'
         ? 'Khóa truy cập Cam Studio không đúng.'
-        : 'Không tạo được phiên remote. Kiểm tra cấu hình LiveKit trên máy chủ.';
+        : isUsbMode ? 'Không tạo được phiên USB. Kiểm tra server.py và adb reverse.' : 'Không tạo được phiên remote. Kiểm tra cấu hình LiveKit trên máy chủ.';
     showSnackbar(message);
   }
 }
@@ -335,7 +367,7 @@ async function openPairing(forceNew = false) {
 function revokePairing(message = 'Đã thu hồi phiên ghép nối') {
   const session = readPairingSession();
   if (session && session.transport !== 'livekit') {
-    fetch(`/api/rooms/${session.room}?token=${encodeURIComponent(session.token)}`, {
+    fetch(apiUrl(`/api/rooms/${session.room}?token=${encodeURIComponent(session.token)}`), {
       method: 'DELETE',
     }).catch(() => {});
   }
@@ -346,7 +378,7 @@ function revokePairing(message = 'Đã thu hồi phiên ghép nối') {
     liveKitRoom = undefined;
   }
   activeRelaySession = undefined;
-  localStorage.removeItem(PAIRING_STORAGE_KEY);
+  localStorage.removeItem(pairingStorageKey());
   window.clearInterval(expiryTimer);
   const badge = document.querySelector('#sessionBadge');
   badge.classList.remove('success');
@@ -405,7 +437,7 @@ function frameBlob() {
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
   context.drawImage(videoPreview, 0, 0, relayCanvas.width, relayCanvas.height);
-  return new Promise((resolve) => relayCanvas.toBlob(resolve, 'image/jpeg', 0.90));
+  return new Promise((resolve) => relayCanvas.toBlob(resolve, 'image/jpeg', isUsbMode ? 0.96 : 0.90));
 }
 
 function configureRelayCanvas(track) {
@@ -427,7 +459,7 @@ function configureRelayCanvas(track) {
 async function recoverRelay(session) {
   relayInfo = null;
   const info = await getRelayInfo();
-  session.origin = info.receiverOrigin;
+  session.origin = isUsbMode ? USB_ORIGIN : info.receiverOrigin;
   await registerPairingSession(session);
 }
 
@@ -503,13 +535,13 @@ async function publishFrames(initialSession, generation) {
       const blob = await frameBlob();
       if (!blob) throw new Error('jpeg_failed');
       const response = await fetchWithTimeout(
-        `/api/rooms/${session.room}/frame?token=${encodeURIComponent(session.token)}`,
+        apiUrl(`/api/rooms/${session.room}/frame?token=${encodeURIComponent(session.token)}`),
         { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob },
       );
       if (!response.ok) throw new Error(`publish_${response.status}`);
       publishedFrames += 1;
       consecutiveFailures = 0;
-      relayStatus.textContent = `Đang phát thật qua LAN • ${publishedFrames} frame`;
+      relayStatus.textContent = `Đang phát thật qua ${isUsbMode ? 'USB' : 'LAN'} • ${publishedFrames} frame`;
     } catch (_) {
       if (generation !== relayGeneration) break;
       consecutiveFailures += 1;
@@ -551,7 +583,7 @@ async function startDesktopSource(showPairingAfter = false) {
         height: { ideal: maxHeight },
         frameRate: { ideal: desiredFps },
       },
-      audio: selectedAudioId ? { deviceId: { exact: selectedAudioId } } : true,
+      audio: isUsbMode ? false : selectedAudioId ? { deviceId: { exact: selectedAudioId } } : true,
     });
     await populateDevices(
       activeStream.getVideoTracks()[0]?.getSettings().deviceId || selectedVideoId,
@@ -566,7 +598,7 @@ async function startDesktopSource(showPairingAfter = false) {
     renderPairing(session);
     relayStatus.textContent = session.transport === 'livekit'
       ? 'Nguồn đã mở; đang kết nối Internet…'
-      : 'Nguồn đã mở; đang gửi frame đầu tiên qua LAN/USB tether…';
+      : 'Nguồn đã mở; đang gửi frame đầu tiên qua USB…';
     startRelay.textContent = 'Đổi / khởi động lại nguồn';
     void publishFrames(session, generation);
     if (showPairingAfter) setSheet(pairingSheet);
@@ -594,4 +626,7 @@ document.querySelectorAll('.permission-button').forEach((button) => {
 const activeSession = readPairingSession();
 if (activeSession) {
   ensurePairingSession(false).then(renderPairing).catch(() => revokePairing('Phiên cũ không còn hoạt động'));
+}
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
 }

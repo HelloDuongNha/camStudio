@@ -159,6 +159,7 @@ input[type="range"] { width: 100%; height: 5px; margin: 7px 0; border-radius: va
 .connect-card { position: relative; overflow: hidden; }
 .connect-card p:not(.section-kicker) { max-width: 250px; margin: 9px 0 18px; color: var(--text-muted); font-size: 12px; line-height: 1.55; }
 .connect-card .button + .button { margin-top: 5px; }
+.connect-card .transport-hint { max-width: none !important; margin: 8px 0 14px !important; }
 .connect-art { position: absolute; top: -18px; right: -14px; display: grid; place-items: center; width: 102px; height: 102px; border-radius: 36px; color: var(--brand); background: var(--brand-soft); transform: rotate(12deg); }
 .connect-art svg { width: 30px; height: 30px; transform: rotate(-12deg); }
 

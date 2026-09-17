@@ -113,7 +113,20 @@ class Handler(SimpleHTTPRequestHandler):
         # Development clients must pick up transport fixes immediately instead of keeping a
         # stale relay loop in the browser cache.
         self.send_header("Cache-Control", "no-store")
+        if self.path.startswith("/api/") and self.headers.get("Origin") == "https://campoc.onrender.com":
+            self.send_header("Access-Control-Allow-Origin", "https://campoc.onrender.com")
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Private-Network", "true")
         super().end_headers()
+
+    def do_OPTIONS(self) -> None:
+        if not urlparse(self.path).path.startswith("/api/"):
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.end_headers()
 
     def send_json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload).encode("utf-8")
