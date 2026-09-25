@@ -438,7 +438,7 @@ function frameBlob() {
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
   context.drawImage(videoPreview, 0, 0, relayCanvas.width, relayCanvas.height);
-  return new Promise((resolve) => relayCanvas.toBlob(resolve, 'image/jpeg', isUsbMode ? 0.96 : 0.90));
+  return new Promise((resolve) => relayCanvas.toBlob(resolve, 'image/jpeg', 0.96));
 }
 
 function configureRelayCanvas(track) {
@@ -455,6 +455,40 @@ function configureRelayCanvas(track) {
   relayCanvas.width = Math.max(2, Math.round(sourceWidth * scale / 2) * 2);
   relayCanvas.height = Math.max(2, Math.round(sourceHeight * scale / 2) * 2);
   previewResolution.textContent = `${sourceWidth}×${sourceHeight} → ${relayCanvas.width}×${relayCanvas.height} · ${Math.round(settings.frameRate || Number(outputFps.value))} fps`;
+}
+
+function desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, exactSize) {
+  const profile = outputResolution.value;
+  const targetHeight = profile === 'source' ? 2160 : Number(profile);
+  const targetWidth = Math.round(targetHeight * 16 / 9);
+  const dimensions = profile === 'source'
+    ? { width: { ideal: targetWidth }, height: { ideal: targetHeight } }
+    : exactSize
+      ? { width: { exact: targetWidth }, height: { exact: targetHeight } }
+      : { width: { ideal: targetWidth }, height: { ideal: targetHeight } };
+  return {
+    video: {
+      ...(videoDeviceId ? { deviceId: { exact: videoDeviceId } } : {}),
+      ...dimensions,
+      frameRate: { ideal: desiredFps },
+      resizeMode: { ideal: 'none' },
+    },
+    audio: isUsbMode ? false : audioDeviceId ? { deviceId: { exact: audioDeviceId } } : true,
+  };
+}
+
+async function openDesktopStream(videoDeviceId, audioDeviceId, desiredFps) {
+  const exactSize = outputResolution.value !== 'source';
+  try {
+    return await navigator.mediaDevices.getUserMedia(
+      desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, exactSize),
+    );
+  } catch (error) {
+    if (!exactSize || !['OverconstrainedError', 'NotFoundError'].includes(error.name)) throw error;
+    return navigator.mediaDevices.getUserMedia(
+      desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, false),
+    );
+  }
 }
 
 async function recoverRelay(session) {
@@ -575,17 +609,8 @@ async function startDesktopSource(showPairingAfter = false) {
     activeStream?.getTracks().forEach((track) => track.stop());
     const selectedVideoId = videoDevice.value;
     const selectedAudioId = audioDevice.value;
-    const maxHeight = outputResolution.value === 'source' ? 2160 : Number(outputResolution.value);
     const desiredFps = Number(outputFps.value);
-    activeStream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        ...(selectedVideoId ? { deviceId: { exact: selectedVideoId } } : {}),
-        width: { ideal: Math.round(maxHeight * 16 / 9) },
-        height: { ideal: maxHeight },
-        frameRate: { ideal: desiredFps },
-      },
-      audio: isUsbMode ? false : selectedAudioId ? { deviceId: { exact: selectedAudioId } } : true,
-    });
+    activeStream = await openDesktopStream(selectedVideoId, selectedAudioId, desiredFps);
     await populateDevices(
       activeStream.getVideoTracks()[0]?.getSettings().deviceId || selectedVideoId,
       activeStream.getAudioTracks()[0]?.getSettings().deviceId || selectedAudioId,

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'camstudio-shell-usb-near-2';
+const CACHE_NAME = 'camstudio-shell-hd-1080-3';
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/vendor/qrcode.js', '/vendor/livekit-client.umd.js'];
 
 self.addEventListener('install', (event) => {
