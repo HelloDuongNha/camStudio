@@ -137,8 +137,13 @@ const REQUEST_TIMEOUT_MS = 2500;
 const outputResolution = document.querySelector('#outputResolution');
 const outputFps = document.querySelector('#outputFps');
 const previewResolution = document.querySelector('#previewResolution');
+const previewStage = document.querySelector('#previewStage');
 const publishIntervalMs = () => 1000 / Number(outputFps.value || 30);
 [outputResolution, outputFps].forEach((control) => control.addEventListener('change', () => {
+  if (control === outputResolution) {
+    previewStage.classList.toggle('landscape', outputResolution.value.startsWith('landscape-'));
+    previewStage.style.aspectRatio = '';
+  }
   if (hasLiveSource()) showSnackbar('Bấm “Đổi / khởi động lại nguồn” để áp dụng chất lượng mới');
 }));
 
@@ -447,25 +452,33 @@ function configureRelayCanvas(track) {
   const sourceHeight = settings.height || videoPreview.videoHeight;
   if (!sourceWidth || !sourceHeight) throw new Error('source_resolution_unavailable');
   const profile = outputResolution.value;
-  const maxHeight = profile === 'source' ? Infinity : Number(profile);
-  const landscape = sourceWidth >= sourceHeight;
-  const maxWidth = landscape ? maxHeight * 16 / 9 : maxHeight;
-  const maxFrameHeight = landscape ? maxHeight : maxHeight * 16 / 9;
+  if (profile.startsWith('portrait-') && sourceWidth >= sourceHeight) {
+    throw new Error('source_not_portrait');
+  }
+  const maxShortEdge = profile.endsWith('source') ? Infinity : Number(profile.split('-')[1]);
+  const maxWidth = profile.startsWith('portrait-') ? maxShortEdge : maxShortEdge * 16 / 9;
+  const maxFrameHeight = profile.startsWith('portrait-') ? maxShortEdge * 16 / 9 : maxShortEdge;
   const scale = Math.min(1, maxWidth / sourceWidth, maxFrameHeight / sourceHeight);
   relayCanvas.width = Math.max(2, Math.round(sourceWidth * scale / 2) * 2);
   relayCanvas.height = Math.max(2, Math.round(sourceHeight * scale / 2) * 2);
+  previewStage.classList.toggle('landscape', sourceWidth >= sourceHeight);
+  previewStage.style.aspectRatio = `${sourceWidth} / ${sourceHeight}`;
   previewResolution.textContent = `${sourceWidth}×${sourceHeight} → ${relayCanvas.width}×${relayCanvas.height} · ${Math.round(settings.frameRate || Number(outputFps.value))} fps`;
 }
 
 function desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, exactSize) {
   const profile = outputResolution.value;
-  const targetHeight = profile === 'source' ? 2160 : Number(profile);
-  const targetWidth = Math.round(targetHeight * 16 / 9);
-  const dimensions = profile === 'source'
-    ? { width: { ideal: targetWidth }, height: { ideal: targetHeight } }
-    : exactSize
+  const portrait = profile.startsWith('portrait-');
+  const shortEdge = profile === 'portrait-source' ? 1080
+    : profile === 'source' ? 0 : Number(profile.split('-')[1]);
+  const targetWidth = portrait ? shortEdge : Math.round(shortEdge * 16 / 9);
+  const targetHeight = portrait ? Math.round(shortEdge * 16 / 9) : shortEdge;
+  let dimensions = {};
+  if (profile !== 'source') {
+    dimensions = exactSize
       ? { width: { exact: targetWidth }, height: { exact: targetHeight } }
       : { width: { ideal: targetWidth }, height: { ideal: targetHeight } };
+  }
   return {
     video: {
       ...(videoDeviceId ? { deviceId: { exact: videoDeviceId } } : {}),
@@ -478,7 +491,7 @@ function desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, exact
 }
 
 async function openDesktopStream(videoDeviceId, audioDeviceId, desiredFps) {
-  const exactSize = outputResolution.value !== 'source';
+  const exactSize = outputResolution.value.startsWith('landscape-');
   try {
     return await navigator.mediaDevices.getUserMedia(
       desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, exactSize),
@@ -630,11 +643,20 @@ async function startDesktopSource(showPairingAfter = false) {
     if (showPairingAfter) setSheet(pairingSheet);
     return true;
   } catch (error) {
-    relayStatus.textContent = error.name === 'NotAllowedError'
+    activeStream?.getTracks().forEach((track) => track.stop());
+    activeStream = undefined;
+    videoPreview.srcObject = null;
+    videoPreview.hidden = true;
+    document.querySelector('.preview-empty').hidden = false;
+    const errorMessage = error.name === 'NotAllowedError'
       ? 'Bạn chưa cấp quyền camera cho trang này.'
+      : error.message === 'source_not_portrait'
+        ? 'OBS đang xuất hình ngang. Đặt canvas và output OBS thành nguồn dọc rồi mở lại.'
       : 'Không mở được camera/OBS hoặc đường truyền.';
+    relayStatus.textContent = errorMessage;
+    previewResolution.textContent = 'Chưa có nguồn';
     startRelay.textContent = 'Thử lại';
-    setPairingLiveState('Chưa mở được camera/mic · kiểm tra quyền trình duyệt');
+    setPairingLiveState(errorMessage);
     return false;
   } finally {
     startRelay.disabled = false;
