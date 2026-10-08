@@ -12,6 +12,8 @@ let relayRunning = false;
 let relayGeneration = 0;
 let publishedFrames = 0;
 let liveKitRoom;
+let canvasPumpTimer;
+let canvasCaptureStream;
 const USB_ORIGIN = 'http://127.0.0.1:4173';
 let isUsbMode = false;
 const apiUrl = (path) => isUsbMode ? `${USB_ORIGIN}${path}` : path;
@@ -86,6 +88,7 @@ document.querySelectorAll('.source-row').forEach((row) => {
       if (readPairingSession()) revokePairing('Đã đổi đường truyền; tạo QR mới cho nguồn này');
       relayRunning = false;
       relayGeneration += 1;
+      stopCanvasPump();
       activeStream?.getTracks().forEach((track) => track.stop());
       activeStream = undefined;
       relayInfo = undefined;
@@ -324,6 +327,7 @@ function publishCurrentSource(session) {
   }
   const generation = ++relayGeneration;
   relayRunning = false;
+  stopCanvasPump();
   setPairingLiveState(isUsbMode ? 'Đang nối camera qua USB…' : 'Đang nối camera/mic với phòng mới…');
   void publishFrames(session, generation);
 }
@@ -379,6 +383,7 @@ function revokePairing(message = 'Đã thu hồi phiên ghép nối') {
   }
   relayRunning = false;
   relayGeneration += 1;
+  stopCanvasPump();
   if (liveKitRoom) {
     void liveKitRoom.disconnect();
     liveKitRoom = undefined;
@@ -440,7 +445,7 @@ async function populateDevices(selectedVideoId = '', selectedAudioId = '') {
 
 let relayCrop = null;
 
-function frameBlob() {
+function drawRelayFrame() {
   const context = relayCanvas.getContext('2d', { alpha: false });
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
@@ -453,7 +458,30 @@ function frameBlob() {
   } else {
     context.drawImage(videoPreview, 0, 0, relayCanvas.width, relayCanvas.height);
   }
+}
+
+function frameBlob() {
+  drawRelayFrame();
   return new Promise((resolve) => relayCanvas.toBlob(resolve, 'image/jpeg', 0.96));
+}
+
+function stopCanvasPump() {
+  if (canvasPumpTimer) window.clearInterval(canvasPumpTimer);
+  canvasPumpTimer = undefined;
+  canvasCaptureStream?.getTracks().forEach((track) => track.stop());
+  canvasCaptureStream = undefined;
+}
+
+function startCanvasPump(generation) {
+  stopCanvasPump();
+  drawRelayFrame();
+  canvasPumpTimer = window.setInterval(() => {
+    if (generation !== relayGeneration || !hasLiveSource()) {
+      stopCanvasPump();
+      return;
+    }
+    drawRelayFrame();
+  }, publishIntervalMs());
 }
 
 function configureRelayCanvas(track) {
@@ -541,6 +569,7 @@ async function publishLiveKit(session, generation) {
     if (generation === relayGeneration) setPairingLiveState('Camera + mic đang phát tới điện thoại', true);
   });
   room.on(window.LivekitClient.RoomEvent.Disconnected, () => {
+    if (generation === relayGeneration) stopCanvasPump();
     if (relayRunning && generation === relayGeneration) relayStatus.textContent = 'Đã mất kết nối remote.';
     if (relayRunning && generation === relayGeneration) setPairingLiveState('Đã mất kết nối remote · hãy thử lại');
   });
@@ -549,7 +578,9 @@ async function publishLiveKit(session, generation) {
     await room.disconnect();
     return;
   }
-  const videoTrack = activeStream?.getVideoTracks()[0];
+  startCanvasPump(generation);
+  canvasCaptureStream = relayCanvas.captureStream(Number(outputFps.value) || 30);
+  const videoTrack = canvasCaptureStream.getVideoTracks()[0];
   const audioTrack = activeStream?.getAudioTracks()[0];
   if (videoTrack) {
     await room.localParticipant.publishTrack(videoTrack, {
@@ -562,6 +593,7 @@ async function publishLiveKit(session, generation) {
       source: window.LivekitClient.Track.Source.Microphone,
     });
   }
+  if (generation !== relayGeneration) return;
   relayStatus.textContent = `Đang phát qua Internet • phòng ${session.room}`;
   setPairingLiveState('Camera + mic đang phát tới điện thoại', true);
 }
@@ -575,6 +607,7 @@ async function publishFrames(initialSession, generation) {
     try {
       await publishLiveKit(initialSession, generation);
     } catch (_) {
+      if (generation === relayGeneration) stopCanvasPump();
       if (generation === relayGeneration) relayStatus.textContent = 'Không kết nối được LiveKit • kiểm tra mạng và cấu hình.';
       if (generation === relayGeneration) setPairingLiveState('Không phát được lên LiveKit · hãy thử lại');
     }
@@ -627,6 +660,7 @@ async function startDesktopSource(showPairingAfter = false) {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error('media_unsupported');
     relayRunning = false;
     const generation = ++relayGeneration;
+    stopCanvasPump();
     if (liveKitRoom) {
       await liveKitRoom.disconnect();
       liveKitRoom = undefined;
