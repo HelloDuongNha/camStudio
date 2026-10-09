@@ -74,9 +74,9 @@
 
           <div class="preview-toolbar">
             <div class="segmented-control" aria-label="Chế độ khung hình">
-              <button class="selected" type="button" data-mode="Fit">Fit</button>
-              <button type="button" data-mode="Fill">Fill</button>
-              <button type="button" data-mode="Crop">Crop</button>
+              <button class="selected" type="button" data-mode="center">Cắt giữa</button>
+              <button type="button" data-mode="left">Xoay trái</button>
+              <button type="button" data-mode="right">Xoay phải</button>
             </div>
             <button class="button ghost" type="button" id="resetFrame">Đặt lại khung</button>
           </div>
@@ -125,7 +125,7 @@
               <p id="cameraFormatHelp" class="inline-status" hidden></p>
               <p id="projectorHelp" hidden></p>
               <label class="text-field"><span>Nguồn tiếng</span><select id="audioDevice"><option value="">Tự động chọn</option></select></label>
-              <label class="text-field"><span>Độ phân giải xuất</span><select id="outputResolution"><option value="portrait-source">Ưu tiên dọc 1080×1920 • giữ nguyên khung nếu OBS xuất ngang (mặc định)</option><option value="portrait-1080">Dọc • giới hạn cạnh ngắn 1080</option><option value="portrait-1440">Dọc • giới hạn cạnh ngắn 1440</option><option value="landscape-1080">Ngang 1920×1080</option><option value="landscape-1440">Ngang 2560×1440</option><option value="source">Gốc của camera / OBS • mọi hướng</option></select></label>
+              <label class="text-field"><span>Độ phân giải xuất</span><select id="outputResolution"><option value="portrait-source">Dọc 1080×1920 • cắt giữa nguồn ngang (mặc định)</option><option value="portrait-1080">Dọc 1080×1920</option><option value="portrait-1440">Dọc 1440×2560</option><option value="landscape-1080">Ngang 1920×1080</option><option value="landscape-1440">Ngang 2560×1440</option><option value="source">Gốc của camera / OBS • mọi hướng</option></select></label>
               <label class="text-field"><span>FPS mong muốn</span><select id="outputFps"><option value="30">30 fps (mặc định)</option><option value="60">60 fps</option></select></label>
               <button class="button primary full" id="startRelay" type="button">Bật camera / OBS</button>
               <p id="relayStatus" class="inline-status">Chưa phát dữ liệu.</p>
@@ -225,6 +225,6 @@
 
     <script src="vendor/qrcode.js"></script>
     <script src="vendor/livekit-client.umd.js"></script>
-    <script src="app.js?v=portrait-10"></script>
+    <script src="app.js?v=portrait-11"></script>
   </body>
 </html>

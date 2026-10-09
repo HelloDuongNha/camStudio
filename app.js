@@ -12,8 +12,10 @@ let relayRunning = false;
 let relayGeneration = 0;
 let publishedFrames = 0;
 let liveKitRoom;
-let canvasPumpTimer;
 let canvasCaptureStream;
+let previewFrameTimer;
+let sourceFrameWidth = 0;
+let sourceFrameHeight = 0;
 const USB_ORIGIN = 'http://127.0.0.1:4173';
 let isUsbMode = false;
 const apiUrl = (path) => isUsbMode ? `${USB_ORIGIN}${path}` : path;
@@ -57,7 +59,10 @@ document.querySelectorAll('.segmented-control button').forEach((button) => {
   button.addEventListener('click', () => {
     document.querySelectorAll('.segmented-control button').forEach((item) => item.classList.remove('selected'));
     button.classList.add('selected');
-    showSnackbar(`Khung hình: ${button.dataset.mode}`);
+    rotateRange.value = button.dataset.mode === 'left' ? -90 : button.dataset.mode === 'right' ? 90 : 0;
+    rotateValue.value = `${rotateRange.value}°`;
+    updatePreviewResolution();
+    drawRelayFrame();
   });
 });
 
@@ -65,15 +70,28 @@ const zoomRange = document.querySelector('#zoomRange');
 const rotateRange = document.querySelector('#rotateRange');
 const zoomValue = document.querySelector('#zoomValue');
 const rotateValue = document.querySelector('#rotateValue');
-zoomRange.addEventListener('input', () => { zoomValue.value = `${zoomRange.value}%`; });
-rotateRange.addEventListener('input', () => { rotateValue.value = `${rotateRange.value}°`; });
+zoomRange.min = 100;
+zoomRange.addEventListener('input', () => {
+  zoomValue.value = `${zoomRange.value}%`;
+  drawRelayFrame();
+});
+rotateRange.addEventListener('input', () => {
+  rotateValue.value = `${rotateRange.value}°`;
+  document.querySelectorAll('.segmented-control button').forEach((item) => {
+    item.classList.toggle('selected', Number(rotateRange.value) === ({ center: 0, left: -90, right: 90 })[item.dataset.mode]);
+  });
+  updatePreviewResolution();
+  drawRelayFrame();
+});
 
 document.querySelector('#resetFrame').addEventListener('click', () => {
   zoomRange.value = 100;
   rotateRange.value = 0;
   zoomValue.value = '100%';
   rotateValue.value = '0°';
-  document.querySelectorAll('.segmented-control button').forEach((item) => item.classList.toggle('selected', item.dataset.mode === 'Fit'));
+  document.querySelectorAll('.segmented-control button').forEach((item) => item.classList.toggle('selected', item.dataset.mode === 'center'));
+  updatePreviewResolution();
+  drawRelayFrame();
   showSnackbar('Đã đặt lại khung hình');
 });
 
@@ -89,12 +107,17 @@ document.querySelectorAll('.source-row').forEach((row) => {
       relayRunning = false;
       relayGeneration += 1;
       stopCanvasPump();
+      stopPreviewPump();
       activeStream?.getTracks().forEach((track) => track.stop());
       activeStream = undefined;
       relayInfo = undefined;
       isUsbMode = nextUsbMode;
       updateTransportUi();
       document.querySelector('#sourcePreview').hidden = true;
+      document.querySelector('#relayCanvas').hidden = true;
+      sourceFrameWidth = 0;
+      sourceFrameHeight = 0;
+      document.querySelector('#previewResolution').textContent = 'Chưa có nguồn';
       document.querySelector('.preview-empty').hidden = false;
       document.querySelector('#relayStatus').textContent = 'Chưa phát dữ liệu.';
     }
@@ -432,7 +455,7 @@ function updateCameraFormatHelp() {
   if (!cameraFormatHelp) return;
   const selectedLabel = videoDevice.selectedOptions[0]?.textContent || '';
   cameraFormatHelp.hidden = !/OBS Virtual Camera/i.test(selectedLabel);
-  cameraFormatHelp.textContent = 'Studio lấy trực tiếp OBS Virtual Camera. Kích thước thực tế ở preview do camera ảo cấp; cài canvas dọc trong OBS không bảo đảm camera ảo trên macOS xuất dọc.';
+  cameraFormatHelp.textContent = 'Cắt giữa sẽ bỏ hai rìa của nguồn ngang. Muốn giữ đủ 1920×1080 pixel, hãy xoay hình trong OBS 90° cho nằm ngang, rồi chọn Xoay trái/phải tại preview để dựng lại thành 1080×1920.';
 }
 
 videoDevice.addEventListener('change', updateCameraFormatHelp);
@@ -457,34 +480,54 @@ async function populateDevices(selectedVideoId = '', selectedAudioId = '') {
 }
 
 function drawRelayFrame() {
+  if (!videoPreview.videoWidth || !videoPreview.videoHeight) return;
   const context = relayCanvas.getContext('2d', { alpha: false });
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
-  context.drawImage(videoPreview, 0, 0, relayCanvas.width, relayCanvas.height);
+  const width = relayCanvas.width;
+  const height = relayCanvas.height;
+  const sourceWidth = videoPreview.videoWidth;
+  const sourceHeight = videoPreview.videoHeight;
+  const radians = Number(rotateRange.value) * Math.PI / 180;
+  const cosine = Math.abs(Math.cos(radians));
+  const sine = Math.abs(Math.sin(radians));
+  const coverScale = Math.max(
+    (width * cosine + height * sine) / sourceWidth,
+    (width * sine + height * cosine) / sourceHeight,
+  );
+  const scale = coverScale * Math.max(1, Number(zoomRange.value) / 100) * 1.001;
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.clearRect(0, 0, width, height);
+  context.translate(width / 2, height / 2);
+  context.rotate(radians);
+  context.scale(scale, scale);
+  context.drawImage(videoPreview, -sourceWidth / 2, -sourceHeight / 2);
+  context.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+function stopPreviewPump() {
+  if (previewFrameTimer) window.clearInterval(previewFrameTimer);
+  previewFrameTimer = undefined;
+}
+
+function startPreviewPump() {
+  stopPreviewPump();
+  drawRelayFrame();
+  previewFrameTimer = window.setInterval(drawRelayFrame, 1000 / (Number(outputFps.value) || 30));
 }
 
 function frameBlob() {
-  drawRelayFrame();
   return new Promise((resolve) => relayCanvas.toBlob(resolve, 'image/jpeg', 0.96));
 }
 
 function stopCanvasPump() {
-  if (canvasPumpTimer) window.clearInterval(canvasPumpTimer);
-  canvasPumpTimer = undefined;
   canvasCaptureStream?.getTracks().forEach((track) => track.stop());
   canvasCaptureStream = undefined;
 }
 
-function startCanvasPump(generation) {
+function startCanvasPump() {
   stopCanvasPump();
   drawRelayFrame();
-  canvasPumpTimer = window.setInterval(() => {
-    if (generation !== relayGeneration || !hasLiveSource()) {
-      stopCanvasPump();
-      return;
-    }
-    drawRelayFrame();
-  }, publishIntervalMs());
 }
 
 function configureRelayCanvas(track) {
@@ -493,16 +536,37 @@ function configureRelayCanvas(track) {
   const sourceHeight = videoPreview.videoHeight || settings.height;
   if (!sourceWidth || !sourceHeight) throw new Error('source_resolution_unavailable');
   const profile = outputResolution.value;
-  const maxShortEdge = profile.endsWith('source') ? Infinity : Number(profile.split('-')[1]);
-  const scale = Math.min(1, maxShortEdge / Math.min(sourceWidth, sourceHeight));
-  relayCanvas.width = Math.max(2, Math.round(sourceWidth * scale / 2) * 2);
-  relayCanvas.height = Math.max(2, Math.round(sourceHeight * scale / 2) * 2);
+  sourceFrameWidth = sourceWidth;
+  sourceFrameHeight = sourceHeight;
+  if (profile.startsWith('portrait-')) {
+    const shortEdge = profile === 'portrait-1440' ? 1440 : 1080;
+    relayCanvas.width = shortEdge;
+    relayCanvas.height = Math.round(shortEdge * 16 / 9);
+  } else {
+    const maxShortEdge = profile === 'source' ? Infinity : Number(profile.split('-')[1]);
+    const scale = Math.min(1, maxShortEdge / Math.min(sourceWidth, sourceHeight));
+    relayCanvas.width = Math.max(2, Math.round(sourceWidth * scale / 2) * 2);
+    relayCanvas.height = Math.max(2, Math.round(sourceHeight * scale / 2) * 2);
+  }
   previewStage.classList.toggle('landscape', relayCanvas.width >= relayCanvas.height);
   previewStage.style.aspectRatio = `${relayCanvas.width} / ${relayCanvas.height}`;
-  videoPreview.style.objectFit = 'contain';
-  const sourceIsLandscape = sourceWidth >= sourceHeight;
-  const portraitMismatch = profile.startsWith('portrait-') && sourceIsLandscape;
-  previewResolution.textContent = `${sourceWidth}×${sourceHeight} → ${relayCanvas.width}×${relayCanvas.height} · ${Math.round(settings.frameRate || Number(outputFps.value))} fps${portraitMismatch ? ' · nguồn đang ngang; giữ nguyên toàn khung' : ''}`;
+  updatePreviewResolution(settings.frameRate);
+}
+
+function updatePreviewResolution(frameRate) {
+  if (!sourceFrameWidth || !sourceFrameHeight) return;
+  const rotation = Number(rotateRange.value);
+  const sourceLandscape = sourceFrameWidth > sourceFrameHeight;
+  const outputPortrait = relayCanvas.height > relayCanvas.width;
+  const croppedWidth = Math.round(sourceFrameHeight * relayCanvas.width / relayCanvas.height);
+  const detail = outputPortrait && sourceLandscape
+    ? Math.abs(rotation) === 90
+      ? ' · xoay 90°; dùng toàn khung nguồn'
+      : rotation === 0
+        ? ` · cắt giữa ≈${croppedWidth}×${sourceFrameHeight} pixel nguồn`
+        : ' · xoay và cắt để lấp đầy khung dọc'
+    : '';
+  previewResolution.textContent = `${sourceFrameWidth}×${sourceFrameHeight} → ${relayCanvas.width}×${relayCanvas.height} · ${Math.round(frameRate || Number(outputFps.value))} fps${detail}`;
 }
 
 function desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, sizeMode) {
@@ -579,7 +643,7 @@ async function publishLiveKit(session, generation) {
     await room.disconnect();
     return;
   }
-  startCanvasPump(generation);
+  startCanvasPump();
   canvasCaptureStream = relayCanvas.captureStream(Number(outputFps.value) || 30);
   const videoTrack = canvasCaptureStream.getVideoTracks()[0];
   const audioTrack = activeStream?.getAudioTracks()[0];
@@ -665,6 +729,7 @@ async function startDesktopSource(showPairingAfter = false) {
     relayRunning = false;
     const generation = ++relayGeneration;
     stopCanvasPump();
+    stopPreviewPump();
     const selectedAudioId = audioDevice.value;
     const desiredFps = Number(outputFps.value);
     const nextStream = await openDesktopStream(selectedVideoId, selectedAudioId, desiredFps);
@@ -686,13 +751,15 @@ async function startDesktopSource(showPairingAfter = false) {
       activeStream.getAudioTracks()[0]?.getSettings().deviceId || selectedAudioId,
     );
     videoPreview.srcObject = activeStream;
-    videoPreview.hidden = false;
+    videoPreview.hidden = true;
     document.querySelector('.preview-empty').hidden = true;
     await videoPreview.play();
     configureRelayCanvas(activeStream.getVideoTracks()[0]);
+    relayCanvas.hidden = false;
+    startPreviewPump();
     if (/OBS Virtual Camera/i.test(activeStream.getVideoTracks()[0]?.label || '') &&
-      outputResolution.value.startsWith('portrait-') && videoPreview.videoWidth >= videoPreview.videoHeight) {
-      showSnackbar(`OBS Virtual Camera đang cấp ${videoPreview.videoWidth}×${videoPreview.videoHeight} ngang; Studio không thể lấy lại phần khung dọc đã bị camera ảo cắt.`);
+      outputResolution.value.startsWith('portrait-') && videoPreview.videoWidth >= videoPreview.videoHeight && Number(rotateRange.value) === 0) {
+      showSnackbar('Đang cắt giữa nguồn ngang để xuất dọc. Xoay nguồn 90° trong OBS rồi chọn Xoay trái/phải để giữ đủ pixel.');
     }
     let session;
     try {
@@ -715,10 +782,14 @@ async function startDesktopSource(showPairingAfter = false) {
     if (showPairingAfter) setSheet(pairingSheet);
     return true;
   } catch (error) {
+    stopPreviewPump();
     activeStream?.getTracks().forEach((track) => track.stop());
     activeStream = undefined;
     videoPreview.srcObject = null;
     videoPreview.hidden = true;
+    relayCanvas.hidden = true;
+    sourceFrameWidth = 0;
+    sourceFrameHeight = 0;
     document.querySelector('.preview-empty').hidden = false;
     const errorMessage = error.name === 'NotAllowedError'
         ? 'Bạn chưa cấp quyền truy cập camera.'

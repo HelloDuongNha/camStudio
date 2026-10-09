@@ -112,7 +112,8 @@ h3 { font-size: 13px; }
 
 .preview-stage { position: relative; display: grid; place-items: center; width: min(100%, 360px); margin-inline: auto; aspect-ratio: 9/16; overflow: hidden; border-radius: 18px; color: #eae7ff; background: radial-gradient(circle at 70% 25%, rgba(101,88,216,.35), transparent 34%), radial-gradient(circle at 20% 80%, rgba(80,125,176,.26), transparent 30%), linear-gradient(145deg, #181625, #28233c 56%, #191722); }
 .preview-stage.landscape { width: 100%; aspect-ratio: 16/9; }
-.preview-stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #08070c; }
+.preview-stage video, .preview-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #08070c; }
+.preview-stage video[hidden], .preview-stage canvas[hidden] { display: none; }
 .preview-stage::before { content: ""; position: absolute; inset: 0; background: linear-gradient(115deg, transparent 30%, rgba(255,255,255,.035), transparent 72%); }
 .preview-grid-lines { position: absolute; inset: 0; opacity: .2; background-image: linear-gradient(rgba(255,255,255,.16) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.16) 1px, transparent 1px); background-size: 33.333% 33.333%; }
 .preview-empty { position: relative; display: grid; place-items: center; gap: 7px; text-align: center; }
