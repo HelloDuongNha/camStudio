@@ -39,7 +39,7 @@ function serveFile(response, requestPath) {
     return false;
   }
   response.writeHead(200, {
-    'Cache-Control': publicPath === '/index.html' || publicPath === '/sw.js' ? 'no-store' : 'public, max-age=3600',
+    'Cache-Control': 'no-store',
     'Content-Length': size,
     'Content-Type': contentTypes[extname(filePath)] || 'application/octet-stream',
     'X-Content-Type-Options': 'nosniff',

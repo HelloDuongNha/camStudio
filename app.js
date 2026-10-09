@@ -429,6 +429,7 @@ const startRelay = document.querySelector('#startRelay');
 const cameraFormatHelp = document.querySelector('#cameraFormatHelp');
 
 function updateCameraFormatHelp() {
+  if (!cameraFormatHelp) return;
   const selectedLabel = videoDevice.selectedOptions[0]?.textContent || '';
   cameraFormatHelp.hidden = !/OBS Virtual Camera/i.test(selectedLabel);
   cameraFormatHelp.textContent = 'Studio lấy trực tiếp OBS Virtual Camera. Kích thước thực tế ở preview do camera ảo cấp; cài canvas dọc trong OBS không bảo đảm camera ảo trên macOS xuất dọc.';
@@ -744,6 +745,10 @@ const activeSession = readPairingSession();
 if (activeSession) {
   ensurePairingSession(false).then(renderPairing).catch(() => revokePairing('Phiên cũ không còn hoạt động'));
 }
-if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then((registrations) => {
+    registrations.forEach((registration) => {
+      if (new URL(registration.scope).origin === location.origin) registration.unregister();
+    });
+  }).catch(() => {});
 }
