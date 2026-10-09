@@ -1,4 +1,4 @@
-const CACHE_NAME = 'camstudio-shell-portrait-source-9';
+const CACHE_NAME = 'camstudio-shell-portrait-source-10';
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/vendor/qrcode.js', '/vendor/livekit-client.umd.js'];
 
 self.addEventListener('install', (event) => {

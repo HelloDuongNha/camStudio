@@ -426,19 +426,15 @@ const relayStatus = document.querySelector('#relayStatus');
 const videoDevice = document.querySelector('#videoDevice');
 const audioDevice = document.querySelector('#audioDevice');
 const startRelay = document.querySelector('#startRelay');
-const projectorHelp = document.querySelector('#projectorHelp');
+const cameraFormatHelp = document.querySelector('#cameraFormatHelp');
 
-function updateProjectorHelp() {
+function updateCameraFormatHelp() {
   const selectedLabel = videoDevice.selectedOptions[0]?.textContent || '';
-  const isProjector = videoDevice.value === 'obs-projector';
-  const isObsVirtualCamera = /OBS Virtual Camera/i.test(selectedLabel);
-  projectorHelp.hidden = !isProjector && !isObsVirtualCamera;
-  projectorHelp.textContent = isProjector
-    ? 'Trong OBS, nhấp phải khung Preview → Windowed Projector (Preview). Kéo cửa sổ đó thành khung dọc, rồi bấm nút bên dưới và chọn đúng cửa sổ Projector trong hộp chia sẻ.'
-    : 'Nếu OBS Virtual Camera chỉ cấp 1920×1080 như dòng kích thước trên preview, hãy chọn “OBS dọc • chia sẻ cửa sổ Projector” để nhận đủ canvas dọc.';
+  cameraFormatHelp.hidden = !/OBS Virtual Camera/i.test(selectedLabel);
+  cameraFormatHelp.textContent = 'Studio lấy trực tiếp OBS Virtual Camera. Kích thước thực tế ở preview do camera ảo cấp; cài canvas dọc trong OBS không bảo đảm camera ảo trên macOS xuất dọc.';
 }
 
-videoDevice.addEventListener('change', updateProjectorHelp);
+videoDevice.addEventListener('change', updateCameraFormatHelp);
 
 async function populateDevices(selectedVideoId = '', selectedAudioId = '') {
   const devices = await navigator.mediaDevices.enumerateDevices();
@@ -446,13 +442,12 @@ async function populateDevices(selectedVideoId = '', selectedAudioId = '') {
   const microphones = devices.filter((device) => device.kind === 'audioinput');
   videoDevice.replaceChildren(
     new Option('Tự động chọn camera', ''),
-    new Option('OBS dọc • chia sẻ cửa sổ Projector', 'obs-projector'),
   );
   cameras.forEach((camera, index) => {
     videoDevice.add(new Option(camera.label || `Camera ${index + 1}`, camera.deviceId));
   });
   videoDevice.value = selectedVideoId;
-  updateProjectorHelp();
+  updateCameraFormatHelp();
   audioDevice.replaceChildren(new Option('Tự động chọn', ''));
   microphones.forEach((microphone, index) => {
     audioDevice.add(new Option(microphone.label || `Microphone ${index + 1}`, microphone.deviceId));
@@ -534,29 +529,6 @@ function desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, sizeM
 }
 
 async function openDesktopStream(videoDeviceId, audioDeviceId, desiredFps) {
-  if (videoDeviceId === 'obs-projector') {
-    const displayStream = await navigator.mediaDevices.getDisplayMedia({
-      video: { displaySurface: 'window', frameRate: { ideal: desiredFps } },
-      audio: false,
-      preferCurrentTab: false,
-      selfBrowserSurface: 'exclude',
-    });
-    const displaySurface = displayStream.getVideoTracks()[0]?.getSettings().displaySurface;
-    if (displaySurface && displaySurface !== 'window') {
-      displayStream.getTracks().forEach((track) => track.stop());
-      throw new Error('select_projector_window');
-    }
-    if (isUsbMode) return displayStream;
-    try {
-      const microphone = await navigator.mediaDevices.getUserMedia({
-        audio: audioDeviceId ? { deviceId: { exact: audioDeviceId } } : true,
-      });
-      return new MediaStream([...displayStream.getVideoTracks(), ...microphone.getAudioTracks()]);
-    } catch (error) {
-      displayStream.getTracks().forEach((track) => track.stop());
-      throw error;
-    }
-  }
   const profile = outputResolution.value;
   const sizeMode = profile === 'source' ? 'none' : 'exact';
   try {
@@ -686,8 +658,7 @@ async function startDesktopSource(showPairingAfter = false) {
   startRelay.textContent = 'Đang mở nguồn…';
   try {
     const selectedVideoId = videoDevice.value;
-    if (!navigator.mediaDevices?.getUserMedia ||
-      (selectedVideoId === 'obs-projector' && !navigator.mediaDevices.getDisplayMedia)) {
+    if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error('media_unsupported');
     }
     relayRunning = false;
@@ -695,7 +666,6 @@ async function startDesktopSource(showPairingAfter = false) {
     stopCanvasPump();
     const selectedAudioId = audioDevice.value;
     const desiredFps = Number(outputFps.value);
-    // Screen capture must be requested during the button's user activation.
     const nextStream = await openDesktopStream(selectedVideoId, selectedAudioId, desiredFps);
     if (generation !== relayGeneration) {
       nextStream.getTracks().forEach((track) => track.stop());
@@ -711,8 +681,7 @@ async function startDesktopSource(showPairingAfter = false) {
     activeStream?.getTracks().forEach((track) => track.stop());
     activeStream = nextStream;
     await populateDevices(
-      selectedVideoId === 'obs-projector' ? selectedVideoId
-        : activeStream.getVideoTracks()[0]?.getSettings().deviceId || selectedVideoId,
+      activeStream.getVideoTracks()[0]?.getSettings().deviceId || selectedVideoId,
       activeStream.getAudioTracks()[0]?.getSettings().deviceId || selectedAudioId,
     );
     videoPreview.srcObject = activeStream;
@@ -720,10 +689,9 @@ async function startDesktopSource(showPairingAfter = false) {
     document.querySelector('.preview-empty').hidden = true;
     await videoPreview.play();
     configureRelayCanvas(activeStream.getVideoTracks()[0]);
-    if (selectedVideoId !== 'obs-projector' &&
-      /OBS Virtual Camera/i.test(activeStream.getVideoTracks()[0]?.label || '') &&
+    if (/OBS Virtual Camera/i.test(activeStream.getVideoTracks()[0]?.label || '') &&
       outputResolution.value.startsWith('portrait-') && videoPreview.videoWidth >= videoPreview.videoHeight) {
-      showSnackbar('OBS Virtual Camera chỉ cấp khung ngang. Chọn “OBS dọc • chia sẻ cửa sổ Projector” để lấy đủ canvas dọc.');
+      showSnackbar(`OBS Virtual Camera đang cấp ${videoPreview.videoWidth}×${videoPreview.videoHeight} ngang; Studio không thể lấy lại phần khung dọc đã bị camera ảo cắt.`);
     }
     let session;
     try {
@@ -751,10 +719,8 @@ async function startDesktopSource(showPairingAfter = false) {
     videoPreview.srcObject = null;
     videoPreview.hidden = true;
     document.querySelector('.preview-empty').hidden = false;
-    const errorMessage = error.message === 'select_projector_window'
-      ? 'Hãy chọn cửa sổ OBS Projector, không chọn cả màn hình hoặc tab.'
-      : error.name === 'NotAllowedError'
-        ? 'Bạn chưa cấp quyền chia sẻ cửa sổ hoặc camera.'
+    const errorMessage = error.name === 'NotAllowedError'
+        ? 'Bạn chưa cấp quyền truy cập camera.'
         : 'Không mở được camera/OBS hoặc đường truyền.';
     relayStatus.textContent = errorMessage;
     previewResolution.textContent = 'Chưa có nguồn';
