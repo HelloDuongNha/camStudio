@@ -443,21 +443,11 @@ async function populateDevices(selectedVideoId = '', selectedAudioId = '') {
   audioDevice.value = selectedAudioId;
 }
 
-let relayCrop = null;
-
 function drawRelayFrame() {
   const context = relayCanvas.getContext('2d', { alpha: false });
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = 'high';
-  if (relayCrop) {
-    const videoWidth = videoPreview.videoWidth || relayCrop.sourceWidth;
-    const videoHeight = videoPreview.videoHeight || relayCrop.sourceHeight;
-    const cropWidth = videoHeight * 9 / 16;
-    context.drawImage(videoPreview, (videoWidth - cropWidth) / 2, 0, cropWidth, videoHeight,
-      0, 0, relayCanvas.width, relayCanvas.height);
-  } else {
-    context.drawImage(videoPreview, 0, 0, relayCanvas.width, relayCanvas.height);
-  }
+  context.drawImage(videoPreview, 0, 0, relayCanvas.width, relayCanvas.height);
 }
 
 function frameBlob() {
@@ -490,23 +480,19 @@ function configureRelayCanvas(track) {
   const sourceHeight = videoPreview.videoHeight || settings.height;
   if (!sourceWidth || !sourceHeight) throw new Error('source_resolution_unavailable');
   const profile = outputResolution.value;
-  relayCrop = profile.startsWith('portrait-') && sourceWidth >= sourceHeight
-    ? { sourceWidth, sourceHeight } : null;
   const maxShortEdge = profile.endsWith('source') ? Infinity : Number(profile.split('-')[1]);
-  const inputWidth = relayCrop ? sourceHeight * 9 / 16 : sourceWidth;
-  const inputHeight = sourceHeight;
-  const maxWidth = profile.startsWith('portrait-') ? maxShortEdge : maxShortEdge * 16 / 9;
-  const maxFrameHeight = profile.startsWith('portrait-') ? maxShortEdge * 16 / 9 : maxShortEdge;
-  const scale = Math.min(1, maxWidth / inputWidth, maxFrameHeight / inputHeight);
-  relayCanvas.width = Math.max(2, Math.round(inputWidth * scale / 2) * 2);
-  relayCanvas.height = Math.max(2, Math.round(inputHeight * scale / 2) * 2);
+  const scale = Math.min(1, maxShortEdge / Math.min(sourceWidth, sourceHeight));
+  relayCanvas.width = Math.max(2, Math.round(sourceWidth * scale / 2) * 2);
+  relayCanvas.height = Math.max(2, Math.round(sourceHeight * scale / 2) * 2);
   previewStage.classList.toggle('landscape', relayCanvas.width >= relayCanvas.height);
   previewStage.style.aspectRatio = `${relayCanvas.width} / ${relayCanvas.height}`;
-  videoPreview.style.objectFit = relayCrop ? 'cover' : 'contain';
-  previewResolution.textContent = `${sourceWidth}×${sourceHeight} → ${relayCanvas.width}×${relayCanvas.height} · ${Math.round(settings.frameRate || Number(outputFps.value))} fps${relayCrop ? ' · cắt giữa nguồn ngang' : ''}`;
+  videoPreview.style.objectFit = 'contain';
+  const sourceIsLandscape = sourceWidth >= sourceHeight;
+  const portraitMismatch = profile.startsWith('portrait-') && sourceIsLandscape;
+  previewResolution.textContent = `${sourceWidth}×${sourceHeight} → ${relayCanvas.width}×${relayCanvas.height} · ${Math.round(settings.frameRate || Number(outputFps.value))} fps${portraitMismatch ? ' · OBS đang xuất ngang; giữ nguyên toàn khung' : ''}`;
 }
 
-function desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, exactSize) {
+function desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, sizeMode) {
   const profile = outputResolution.value;
   const portrait = profile.startsWith('portrait-');
   const shortEdge = profile === 'portrait-source' ? 1080
@@ -514,8 +500,8 @@ function desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, exact
   const targetWidth = portrait ? shortEdge : Math.round(shortEdge * 16 / 9);
   const targetHeight = portrait ? Math.round(shortEdge * 16 / 9) : shortEdge;
   let dimensions = {};
-  if (profile !== 'source') {
-    dimensions = exactSize
+  if (profile !== 'source' && sizeMode !== 'none') {
+    dimensions = sizeMode === 'exact'
       ? { width: { exact: targetWidth }, height: { exact: targetHeight } }
       : { width: { ideal: targetWidth }, height: { ideal: targetHeight } };
   }
@@ -524,22 +510,24 @@ function desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, exact
       ...(videoDeviceId ? { deviceId: { exact: videoDeviceId } } : {}),
       ...dimensions,
       frameRate: { ideal: desiredFps },
-      resizeMode: { ideal: 'none' },
+      resizeMode: portrait && sizeMode === 'exact' ? { exact: 'none' } : { ideal: 'none' },
     },
     audio: isUsbMode ? false : audioDeviceId ? { deviceId: { exact: audioDeviceId } } : true,
   };
 }
 
 async function openDesktopStream(videoDeviceId, audioDeviceId, desiredFps) {
-  const exactSize = outputResolution.value.startsWith('landscape-');
+  const profile = outputResolution.value;
+  const sizeMode = profile === 'source' ? 'none' : 'exact';
   try {
     return await navigator.mediaDevices.getUserMedia(
-      desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, exactSize),
+      desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, sizeMode),
     );
   } catch (error) {
-    if (!exactSize || !['OverconstrainedError', 'NotFoundError'].includes(error.name)) throw error;
+    if (sizeMode === 'none' || !['OverconstrainedError', 'NotFoundError'].includes(error.name)) throw error;
+    const fallbackMode = profile.startsWith('portrait-') ? 'none' : 'ideal';
     return navigator.mediaDevices.getUserMedia(
-      desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, false),
+      desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, fallbackMode),
     );
   }
 }
@@ -702,7 +690,6 @@ async function startDesktopSource(showPairingAfter = false) {
   } catch (error) {
     activeStream?.getTracks().forEach((track) => track.stop());
     activeStream = undefined;
-    relayCrop = null;
     videoPreview.srcObject = null;
     videoPreview.hidden = true;
     document.querySelector('.preview-empty').hidden = false;
