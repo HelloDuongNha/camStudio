@@ -37,9 +37,19 @@ Ba giá trị LiveKit chỉ tồn tại ở Vercel Function và không được 
 ## Luồng sử dụng
 
 1. Mở Studio trên máy tính. Chọn camera/OBS Virtual Camera và microphone muốn phát.
-2. Bấm **Tạo mã ghép nối**, sau đó **Bắt đầu camera/OBS**.
-3. Trong VirtualCamPoC trên Android, quét QR hoặc dán toàn bộ link ghép nối.
+2. Với USB, chạy `./start_usb_mode.sh`, chọn **Kết nối gần** rồi bật camera/OBS. Studio tạo phiên cục bộ và VirtualCamPoC tự nhận qua `adb reverse`; không cần quét QR.
+3. Với LAN/Cloud, bấm **Tạo mã ghép nối**, sau đó quét QR hoặc nhập mã trong VirtualCamPoC.
 4. Chọn nguồn đã ghép làm nguồn đang chạy, rồi mở Cam Browser/WebTest.
+
+### Nguồn OBS dọc
+
+Studio lấy trực tiếp khung do **OBS Virtual Camera** cấp. Chọn **Ưu tiên dọc 1080×1920** để yêu cầu khung dọc và kiểm tra dòng kích thước thực tế trên preview. Trên bản OBS macOS hiện tại, camera extension có thể chỉ công bố **1920×1080** ngay cả khi canvas OBS là **1080×1920**. Khi đó Studio không thể khôi phục phần trên/dưới đã bị cắt trong camera ảo; phải sửa hoặc thay camera extension xuất dọc thật sự. Đổi tùy chọn chất lượng khi đang phát cần bấm **Đổi / khởi động lại nguồn**.
+
+### Tự động kết nối USB trên macOS
+
+Chạy `./install_usb_autostart.sh` một lần. LaunchAgent sẽ tự mở relay cục bộ
+và khôi phục `adb reverse` sau mỗi lần đăng nhập, khởi động lại điện thoại hoặc
+rút/cắm lại cáp. Relay USB chỉ lắng nghe trên `127.0.0.1`.
 
 Studio tự chọn LiveKit trên Render/Vercel và relay cục bộ khi chạy bằng `npm run lan`; người dùng không phải đổi chế độ trong giao diện.
 

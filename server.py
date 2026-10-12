@@ -8,6 +8,8 @@ transport for a trusted LAN, not the later Internet/WebRTC media service.
 from __future__ import annotations
 
 import json
+import ipaddress
+import os
 import re
 import secrets
 import socket
@@ -156,6 +158,12 @@ class Handler(SimpleHTTPRequestHandler):
                 return None
             return session
 
+    def is_loopback_client(self) -> bool:
+        try:
+            return ipaddress.ip_address(self.client_address[0]).is_loopback
+        except ValueError:
+            return False
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/api/info":
@@ -163,6 +171,41 @@ class Handler(SimpleHTTPRequestHandler):
                 "receiverOrigin": f"http://{lan_ip()}:{self.server.server_port}",
                 "transport": "lan-jpeg-v1",
             })
+            return
+
+        if parsed.path == "/api/usb/session":
+            # This endpoint transfers the receiver token only through localhost.
+            # With `adb reverse tcp:4173 tcp:4173`, Android reaches this route as
+            # a loopback client, while LAN peers cannot claim a session without
+            # the normal one-time pairing code.
+            if not self.is_loopback_client():
+                self.send_json(HTTPStatus.FORBIDDEN, {"error": "usb_only"})
+                return
+            now = int(time.time())
+            with LOCK:
+                active = [
+                    (room, session)
+                    for room, session in SESSIONS.items()
+                    if session["expires"] > now
+                ]
+                latest = max(
+                    active,
+                    key=lambda item: item[1].get("registeredAt", 0),
+                    default=None,
+                )
+                if latest:
+                    room, session = latest
+                    uri = "camvirtual://pair?" + urlencode({
+                        "v": "1",
+                        "room": room,
+                        "token": session["token"],
+                        "expires": str(session["expires"]),
+                        "origin": f"http://127.0.0.1:{self.server.server_port}",
+                    })
+            if not latest:
+                self.send_json(HTTPStatus.NOT_FOUND, {"error": "no_active_session"})
+            else:
+                self.send_json(HTTPStatus.OK, {"uri": uri, "transport": "usb-adb-reverse-v1"})
             return
 
         parts = parsed.path.strip("/").split("/")
@@ -217,7 +260,7 @@ class Handler(SimpleHTTPRequestHandler):
                 room = str(value["room"])
                 token = str(value["token"])
                 expires = int(value["expires"])
-                if len(room) != 6 or not 22 <= len(token) <= 128:
+                if not re.fullmatch(r"[A-HJ-NP-Z2-9]{6}", room) or not 22 <= len(token) <= 128:
                     raise ValueError()
                 if expires <= int(time.time()) or expires > int(time.time()) + MAX_SESSION_SECONDS:
                     raise ValueError()
@@ -229,6 +272,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if previous and previous.get("token") == token:
                     session = previous
                     session["expires"] = expires
+                    session["registeredAt"] = time.time()
                 else:
                     session = {
                         "token": token,
@@ -236,6 +280,7 @@ class Handler(SimpleHTTPRequestHandler):
                         "frame": None,
                         "sequence": 0,
                         "publishedAt": 0,
+                        "registeredAt": time.time(),
                     }
                     SESSIONS[room] = session
                 now = int(time.time())
@@ -347,9 +392,14 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server = ThreadingHTTPServer(("0.0.0.0", 4173), Handler)
-    threading.Thread(target=discovery_loop, args=(server.server_port,), daemon=True).start()
+    bind_host = os.environ.get("CAM_STUDIO_BIND", "0.0.0.0")
+    server = ThreadingHTTPServer((bind_host, 4173), Handler)
+    if bind_host not in {"127.0.0.1", "::1", "localhost"}:
+        threading.Thread(target=discovery_loop, args=(server.server_port,), daemon=True).start()
     print(f"Cam Virtual Studio: http://127.0.0.1:{server.server_port}")
-    print(f"Điện thoại sẽ nhận qua: http://{lan_ip()}:{server.server_port}")
-    print(f"LAN discovery UDP: {DISCOVERY_PORT}")
+    if bind_host in {"127.0.0.1", "::1", "localhost"}:
+        print("USB-only mode: relay chỉ lắng nghe trên máy tính này")
+    else:
+        print(f"Điện thoại sẽ nhận qua: http://{lan_ip()}:{server.server_port}")
+        print(f"LAN discovery UDP: {DISCOVERY_PORT}")
     server.serve_forever()

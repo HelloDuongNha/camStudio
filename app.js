@@ -23,10 +23,10 @@ const apiUrl = (path) => isUsbMode ? `${USB_ORIGIN}${path}` : path;
 
 function updateTransportUi() {
   document.querySelector('#transportHint').textContent = isUsbMode
-    ? 'USB trực tiếp đang chọn. Chạy start_usb_mode.sh trên máy tính rồi bật camera/OBS; QR sẽ nối qua cáp, không qua Render.'
+    ? 'USB trực tiếp đang chọn. Chạy start_usb_mode.sh rồi bật camera/OBS; CamPOC sẽ tự nhận phiên qua cáp, không qua Render.'
     : 'Camera / OBS từ xa phát qua Cloud Render / LiveKit.';
   document.querySelector('#pairingTransportNote').textContent = isUsbMode
-    ? 'USB: quét QR trong CamPOC; mã chữ LAN không hoạt động qua cáp. Luồng này hiện chỉ truyền hình.'
+    ? 'USB: CamPOC tự kết nối qua cáp, không cần QR. QR vẫn dùng được như phương án dự phòng. Luồng này hiện chỉ truyền hình.'
     : 'Cloud: phát camera và micro qua Render / LiveKit.';
   const audioLabel = document.querySelector('#audioDevice')?.closest('label');
   if (audioLabel) audioLabel.hidden = isUsbMode;
@@ -347,7 +347,9 @@ function hasLiveSource() {
 
 function publishCurrentSource(session) {
   if (!hasLiveSource()) {
-    setPairingLiveState('Đã có QR · bấm “Bật camera / OBS” trước khi mở camera trên điện thoại');
+    setPairingLiveState(isUsbMode
+      ? 'Phiên USB sẵn sàng · bấm “Bật camera / OBS” để điện thoại tự nhận'
+      : 'Đã có QR · bấm “Bật camera / OBS” trước khi mở camera trên điện thoại');
     return;
   }
   const generation = ++relayGeneration;
@@ -388,7 +390,7 @@ async function openPairing(forceNew = false) {
     setSheet(pairingSheet);
     if (forceNew) publishCurrentSource(session);
     else if (relayRunning && hasLiveSource()) setPairingLiveState(isUsbMode ? 'Camera đang phát qua USB' : 'Camera + mic đang phát tới điện thoại', true);
-    else setPairingLiveState(isUsbMode ? 'Đã có QR · chưa phát camera' : 'Đã có QR · chưa phát camera/mic');
+    else setPairingLiveState(isUsbMode ? 'Phiên USB sẵn sàng · chưa phát camera' : 'Đã có QR · chưa phát camera/mic');
   } catch (error) {
     const message = error.message === 'access_key_required'
       ? 'Cần khóa truy cập Cam Studio để tạo phiên remote.'

@@ -4,7 +4,14 @@ set -euo pipefail
 studio_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 port=4173
 url="https://campoc.onrender.com/"
-python_bin="${CAM_STUDIO_PYTHON:-python3}"
+bundled_python="${HOME}/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
+if [[ -n "${CAM_STUDIO_PYTHON:-}" ]]; then
+  python_bin="$CAM_STUDIO_PYTHON"
+elif [[ -x "$bundled_python" ]]; then
+  python_bin="$bundled_python"
+else
+  python_bin="python3"
+fi
 
 if [[ "${1:-}" == "--watch" ]]; then
   while true; do
@@ -25,7 +32,6 @@ if [[ "${1:-}" == "--watch" ]]; then
 fi
 
 if ! "$python_bin" --version >/dev/null 2>&1; then
-  bundled_python="${HOME}/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
   if [[ -x "$bundled_python" ]] && "$bundled_python" --version >/dev/null 2>&1; then
     python_bin="$bundled_python"
   else
@@ -42,7 +48,7 @@ if ! curl --silent --show-error --fail --max-time 2 "http://127.0.0.1:${port}/ap
     exit 1
   fi
   log_file="$(mktemp "${TMPDIR:-/tmp}/camstudio-usb.XXXXXX")"
-  (cd "$studio_dir" && nohup "$python_bin" server.py >"$log_file" 2>&1 < /dev/null &)
+  (cd "$studio_dir" && CAM_STUDIO_BIND=127.0.0.1 nohup "$python_bin" server.py >"$log_file" 2>&1 < /dev/null &)
   for _ in $(seq 1 30); do
     if curl --silent --show-error --fail --max-time 2 "http://127.0.0.1:${port}/api/info" 2>/dev/null | grep -q 'lan-jpeg-v1'; then
       break
@@ -67,7 +73,7 @@ if [[ ! "$watch_pid" =~ ^[0-9]+$ ]] || ! kill -0 "$watch_pid" 2>/dev/null ||
 else
   echo "Bộ theo dõi cáp USB đã chạy (PID $watch_pid)."
 fi
-echo "Mở $url, chọn Kết nối gần, Bật camera/OBS, tạo QR rồi quét bằng CamPOC hoặc Cam Browser."
+echo "Mở $url, chọn Kết nối gần và Bật camera/OBS. CamPOC sẽ tự nhận phiên qua USB; không cần quét QR."
 if command -v open >/dev/null; then
   open "$url"
 elif command -v xdg-open >/dev/null; then
