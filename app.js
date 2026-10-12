@@ -16,6 +16,7 @@ let canvasCaptureStream;
 let previewFrameTimer;
 let sourceFrameWidth = 0;
 let sourceFrameHeight = 0;
+let sourceFrameRate = 0;
 const USB_ORIGIN = 'http://127.0.0.1:4173';
 let isUsbMode = false;
 const apiUrl = (path) => isUsbMode ? `${USB_ORIGIN}${path}` : path;
@@ -164,7 +165,8 @@ const outputResolution = document.querySelector('#outputResolution');
 const outputFps = document.querySelector('#outputFps');
 const previewResolution = document.querySelector('#previewResolution');
 const previewStage = document.querySelector('#previewStage');
-const publishIntervalMs = () => 1000 / Number(outputFps.value || 30);
+const effectiveOutputFps = () => Math.min(Number(outputFps.value) || 30, sourceFrameRate || Infinity);
+const publishIntervalMs = () => 1000 / effectiveOutputFps();
 [outputResolution, outputFps].forEach((control) => control.addEventListener('change', () => {
   if (control === outputResolution) {
     previewStage.classList.toggle('landscape', outputResolution.value.startsWith('landscape-'));
@@ -513,7 +515,7 @@ function stopPreviewPump() {
 function startPreviewPump() {
   stopPreviewPump();
   drawRelayFrame();
-  previewFrameTimer = window.setInterval(drawRelayFrame, 1000 / (Number(outputFps.value) || 30));
+  previewFrameTimer = window.setInterval(drawRelayFrame, publishIntervalMs());
 }
 
 function frameBlob() {
@@ -538,6 +540,7 @@ function configureRelayCanvas(track) {
   const profile = outputResolution.value;
   sourceFrameWidth = sourceWidth;
   sourceFrameHeight = sourceHeight;
+  sourceFrameRate = Number(settings.frameRate) || 0;
   if (profile.startsWith('portrait-')) {
     const shortEdge = profile === 'portrait-1440' ? 1440 : 1080;
     relayCanvas.width = shortEdge;
@@ -555,6 +558,7 @@ function configureRelayCanvas(track) {
 
 function updatePreviewResolution(frameRate) {
   if (!sourceFrameWidth || !sourceFrameHeight) return;
+  if (frameRate) sourceFrameRate = frameRate;
   const rotation = Number(rotateRange.value);
   const sourceLandscape = sourceFrameWidth > sourceFrameHeight;
   const outputPortrait = relayCanvas.height > relayCanvas.width;
@@ -566,7 +570,9 @@ function updatePreviewResolution(frameRate) {
         ? ` · cắt giữa ≈${croppedWidth}×${sourceFrameHeight} pixel nguồn`
         : ' · xoay và cắt để lấp đầy khung dọc'
     : '';
-  previewResolution.textContent = `${sourceFrameWidth}×${sourceFrameHeight} → ${relayCanvas.width}×${relayCanvas.height} · ${Math.round(frameRate || Number(outputFps.value))} fps${detail}`;
+  const requestedFps = Number(outputFps.value) || 30;
+  const sourceFps = sourceFrameRate ? `${Math.round(sourceFrameRate)} fps` : 'chưa xác định';
+  previewResolution.textContent = `${sourceFrameWidth}×${sourceFrameHeight} → ${relayCanvas.width}×${relayCanvas.height} · nguồn ${sourceFps} · yêu cầu ${requestedFps} fps${detail}`;
 }
 
 function desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, sizeMode) {
@@ -644,7 +650,7 @@ async function publishLiveKit(session, generation) {
     return;
   }
   startCanvasPump();
-  canvasCaptureStream = relayCanvas.captureStream(Number(outputFps.value) || 30);
+  canvasCaptureStream = relayCanvas.captureStream(effectiveOutputFps());
   const videoTrack = canvasCaptureStream.getVideoTracks()[0];
   const audioTrack = activeStream?.getAudioTracks()[0];
   if (videoTrack) {
@@ -679,6 +685,8 @@ async function publishFrames(initialSession, generation) {
     return;
   }
   let consecutiveFailures = 0;
+  let measuredAt = performance.now();
+  let measuredFrames = 0;
   while (
     relayRunning && generation === relayGeneration && activeStream &&
     activeStream.getVideoTracks().some((track) => track.readyState === 'live')
@@ -698,8 +706,18 @@ async function publishFrames(initialSession, generation) {
       );
       if (!response.ok) throw new Error(`publish_${response.status}`);
       publishedFrames += 1;
+      measuredFrames += 1;
       consecutiveFailures = 0;
-      relayStatus.textContent = `Đang phát thật qua ${isUsbMode ? 'USB' : 'LAN'} • ${publishedFrames} frame`;
+      const now = performance.now();
+      if (publishedFrames === 1) relayStatus.textContent = `Đang phát qua ${isUsbMode ? 'USB' : 'LAN'} • đang đo FPS…`;
+      if (now - measuredAt >= 1000) {
+        const sentFps = measuredFrames * 1000 / (now - measuredAt);
+        relayStatus.textContent = `Đang phát qua ${isUsbMode ? 'USB' : 'LAN'} • gửi ${sentFps.toFixed(1)} fps • ${publishedFrames} frame`;
+        if (now - measuredAt >= 1000) {
+          measuredAt = now;
+          measuredFrames = 0;
+        }
+      }
     } catch (_) {
       if (generation !== relayGeneration) break;
       consecutiveFailures += 1;
