@@ -10,7 +10,10 @@ Studio phát camera/microphone từ trình duyệt máy tính sang VirtualCamPoC
 npm run lan
 ```
 
-Sau đó mở `http://localhost:4173`.
+Giao diện Studio dùng `https://campoc.onrender.com/`. Khi dùng USB, mở
+`https://campoc.onrender.com/?transport=usb`. Dịch vụ `127.0.0.1:4173` là
+relay API trên máy tính; đường dẫn `/` và `/index.html` của relay chuyển
+hướng sang giao diện Render, không duy trì thêm một bản Studio cục bộ.
 
 ## Deploy Render
 
@@ -51,7 +54,21 @@ Chạy `./install_usb_autostart.sh` một lần. LaunchAgent sẽ tự mở rela
 và khôi phục `adb reverse` sau mỗi lần đăng nhập, khởi động lại điện thoại hoặc
 rút/cắm lại cáp. Relay USB chỉ lắng nghe trên `127.0.0.1`.
 
-Studio tự chọn LiveKit trên Render/Vercel và relay cục bộ khi chạy bằng `npm run lan`; người dùng không phải đổi chế độ trong giao diện.
+Giao diện Render dùng LiveKit khi chọn Camera / OBS qua Cloud và dùng relay
+cục bộ khi chọn Kết nối gần qua USB. Địa chỉ giao diện luôn là Render;
+`127.0.0.1:4173` chỉ là dịch vụ truyền qua cáp trên máy tính.
+
+Studio nhớ lựa chọn USB/Cloud qua tải lại trang; `?transport=usb` chọn USB
+rõ ràng. Không tự xin quyền camera hoặc bật nguồn khi chỉ mở trang.
+
+### Chẩn đoán giao diện Studio
+
+Nếu script tải/chạy thất bại, Studio hiện thông báo khôi phục với nút tải
+lại và sao chép mốc lỗi. Mốc lỗi chỉ nằm trong tab, giới hạn 20 bản ghi;
+chỉ chứa thời gian, loại lỗi, tên file mã đã cho phép và số dòng. Không
+chứa ảnh, URL phiên, token, khóa truy cập hoặc nội dung request/response.
+Nó không thể cứu tiến trình Chrome đã crash; crash native phải đối chiếu
+crash report của macOS/Chrome riêng.
 
 ## Kiểm tra nhanh bằng UI
 

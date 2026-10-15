@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 
 ROOT = Path(__file__).resolve().parent
+STUDIO_URL = "https://campoc.onrender.com/?transport=usb"
 MAX_FRAME_BYTES = 8 * 1024 * 1024
 MAX_SESSION_SECONDS = 2 * 60 * 60
 PAIR_CODE_SECONDS = 5 * 60
@@ -166,6 +167,12 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path in {"/", "/index.html"}:
+            self.send_response(HTTPStatus.TEMPORARY_REDIRECT)
+            self.send_header("Location", STUDIO_URL)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if parsed.path == "/api/info":
             self.send_json(HTTPStatus.OK, {
                 "receiverOrigin": f"http://{lan_ip()}:{self.server.server_port}",
@@ -396,7 +403,8 @@ if __name__ == "__main__":
     server = ThreadingHTTPServer((bind_host, 4173), Handler)
     if bind_host not in {"127.0.0.1", "::1", "localhost"}:
         threading.Thread(target=discovery_loop, args=(server.server_port,), daemon=True).start()
-    print(f"Cam Virtual Studio: http://127.0.0.1:{server.server_port}")
+    print(f"Cam Virtual Studio UI: {STUDIO_URL}")
+    print(f"USB/LAN relay API: http://127.0.0.1:{server.server_port}/api/info")
     if bind_host in {"127.0.0.1", "::1", "localhost"}:
         print("USB-only mode: relay chỉ lắng nghe trên máy tính này")
     else:

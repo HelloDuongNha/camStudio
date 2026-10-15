@@ -6,9 +6,17 @@
     <meta name="theme-color" content="#f8f7fc" />
     <meta name="description" content="Cam Virtual — không gian điều khiển nguồn camera và microphone cho thiết bị của bạn." />
     <title>Cam Virtual Studio</title>
-    <link rel="stylesheet" href="styles.css?v=portrait-10" />
+    <link rel="stylesheet" href="styles.css?v=stability-13" />
   </head>
   <body>
+    <aside id="studioRecovery" role="alert" hidden style="position:fixed;z-index:10000;inset:12px 12px auto;padding:16px;border:2px solid #a18aff;border-radius:14px;background:#24202f;color:#fff;font:14px/1.5 system-ui;max-width:680px;box-shadow:0 8px 32px #0006">
+      <strong>Studio gặp lỗi tải hoặc chạy giao diện.</strong>
+      <p>Giữ trang này để xem trạng thái. Tải lại sẽ dừng nguồn đang mở; sau đó bạn có thể bật lại camera/OBS.</p>
+      <button id="studioReload" type="button">Tải lại Studio</button>
+      <button id="studioCopyHealth" type="button">Sao chép mốc lỗi</button>
+      <button id="studioDismiss" type="button">Đóng thông báo</button>
+      <p id="studioHealthStatus"></p>
+    </aside>
     <svg class="icon-sprite" aria-hidden="true">
       <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h8A2.5 2.5 0 0 1 17 7.5v.9l2.6-1.7A.9.9 0 0 1 21 7.45v9.1a.9.9 0 0 1-1.4.75L17 15.6v.9a2.5 2.5 0 0 1-2.5 2.5h-8A2.5 2.5 0 0 1 4 16.5v-9Z"/></symbol>
       <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 15.25A3.25 3.25 0 0 0 15.25 12V6a3.25 3.25 0 0 0-6.5 0v6A3.25 3.25 0 0 0 12 15.25Zm-6.5-3.7a.75.75 0 0 1 1.5 0 5 5 0 0 0 10 0 .75.75 0 0 1 1.5 0 6.5 6.5 0 0 1-5.75 6.46V20h2.5a.75.75 0 0 1 0 1.5h-6.5a.75.75 0 0 1 0-1.5h2.5v-1.99A6.5 6.5 0 0 1 5.5 11.55Z"/></symbol>
@@ -223,8 +231,9 @@
       <svg><use href="#i-check" /></svg><span id="snackbarText">Đã cập nhật</span><button type="button" id="snackbarAction">Đóng</button>
     </div>
 
+    <script src="studio-runtime.js?v=stability-13"></script>
     <script src="vendor/qrcode.js"></script>
     <script src="vendor/livekit-client.umd.js"></script>
-    <script src="app.js?v=preview-fps-12"></script>
+    <script src="app.js?v=stability-13"></script>
   </body>
 </html>

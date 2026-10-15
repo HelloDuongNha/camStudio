@@ -8,6 +8,7 @@ const root = fileURLToPath(new URL('.', import.meta.url));
 const port = Number.parseInt(process.env.PORT || '4173', 10);
 const publicFiles = new Set([
   '/app.js',
+  '/studio-runtime.js',
   '/index.html',
   '/styles.css',
   '/sw.js',

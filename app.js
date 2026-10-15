@@ -1,3 +1,9 @@
+const studioRuntime = window.CamStudioRuntime;
+const localStore = studioRuntime.safeStorage(() => window.localStorage);
+const sessionStore = studioRuntime.safeStorage(() => window.sessionStorage);
+const TRANSPORT_STORAGE_KEY = 'camstudio-transport-v1';
+const requestedTransport = new URLSearchParams(window.location.search).get('transport');
+const savedTransport = localStore.getItem(TRANSPORT_STORAGE_KEY);
 const root = document.documentElement;
 const themeToggle = document.querySelector('#themeToggle');
 const themeMeta = document.querySelector('meta[name="theme-color"]');
@@ -10,6 +16,8 @@ let activeStream;
 let activeRelaySession;
 let relayRunning = false;
 let relayGeneration = 0;
+let sourceGeneration = 0;
+let sourceStartInFlight = false;
 let publishedFrames = 0;
 let liveKitRoom;
 let canvasCaptureStream;
@@ -18,7 +26,7 @@ let sourceFrameWidth = 0;
 let sourceFrameHeight = 0;
 let sourceFrameRate = 0;
 const USB_ORIGIN = 'http://127.0.0.1:4173';
-let isUsbMode = false;
+let isUsbMode = studioRuntime.selectedTransport(window.location.search, savedTransport) === 'usb';
 const apiUrl = (path) => isUsbMode ? `${USB_ORIGIN}${path}` : path;
 
 function updateTransportUi() {
@@ -43,10 +51,10 @@ function showSnackbar(message) {
 function setTheme(theme) {
   root.dataset.theme = theme;
   themeMeta.content = theme === 'dark' ? '#111116' : '#f8f7fc';
-  localStorage.setItem('camvirtual-theme', theme);
+  localStore.setItem('camvirtual-theme', theme);
 }
 
-const storedTheme = localStorage.getItem('camvirtual-theme');
+const storedTheme = localStore.getItem('camvirtual-theme');
 const preferredTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 setTheme(storedTheme || preferredTheme);
 
@@ -104,13 +112,17 @@ document.querySelectorAll('.source-row').forEach((row) => {
     }
     const nextUsbMode = row.id === 'nearSource';
     if (nextUsbMode !== isUsbMode) {
+      sourceGeneration += 1;
       if (readPairingSession()) revokePairing('Đã đổi đường truyền; tạo QR mới cho nguồn này');
       relayRunning = false;
       relayGeneration += 1;
       stopCanvasPump();
       stopPreviewPump();
-      activeStream?.getTracks().forEach((track) => track.stop());
+      studioRuntime.stopStream(activeStream);
       activeStream = undefined;
+      const previousRoom = liveKitRoom;
+      liveKitRoom = undefined;
+      if (previousRoom) void previousRoom.disconnect().catch(() => {});
       relayInfo = undefined;
       isUsbMode = nextUsbMode;
       updateTransportUi();
@@ -129,9 +141,23 @@ document.querySelectorAll('.source-row').forEach((row) => {
     row.classList.add('selected');
     row.setAttribute('aria-checked', 'true');
     document.querySelector('#desktopSourceControls').hidden = row.id !== 'computerSource' && row.id !== 'nearSource';
+    const url = new URL(window.location.href);
+    if (row.id === 'computerSource' || row.id === 'nearSource') {
+      const transport = nextUsbMode ? 'usb' : 'cloud';
+      localStore.setItem(TRANSPORT_STORAGE_KEY, transport);
+      url.searchParams.set('transport', transport);
+    } else {
+      localStore.removeItem(TRANSPORT_STORAGE_KEY);
+      url.searchParams.delete('transport');
+    }
+    window.history.replaceState(null, '', url);
     showSnackbar(`Đã chọn ${row.dataset.source}`);
   });
 });
+
+if ([requestedTransport, savedTransport].some((value) => value === 'usb' || value === 'cloud')) {
+  document.querySelector(isUsbMode ? '#nearSource' : '#computerSource').click();
+}
 
 const sheet = document.querySelector('#componentSheet');
 const pairingSheet = document.querySelector('#pairingSheet');
@@ -201,10 +227,10 @@ async function getRelayInfo() {
 }
 
 function studioAccessKey() {
-  let value = sessionStorage.getItem('camstudio-access-key') || '';
+  let value = sessionStore.getItem('camstudio-access-key') || '';
   if (!value) {
     value = window.prompt('Nhập khóa truy cập Cam Studio đã đặt trên dịch vụ triển khai')?.trim() || '';
-    if (value) sessionStorage.setItem('camstudio-access-key', value);
+    if (value) sessionStore.setItem('camstudio-access-key', value);
   }
   return value;
 }
@@ -217,7 +243,7 @@ async function createRemoteSession() {
     headers: { 'X-CamStudio-Access-Key': accessKey },
   }, 8000);
   if (response.status === 401) {
-    sessionStorage.removeItem('camstudio-access-key');
+    sessionStore.removeItem('camstudio-access-key');
     throw new Error('access_denied');
   }
   if (!response.ok) throw new Error('remote_session_failed');
@@ -249,7 +275,7 @@ function randomToken() {
 async function registerPairingSession(session) {
   if (session.transport === 'livekit') {
     activeRelaySession = session;
-    localStorage.setItem(pairingStorageKey(), JSON.stringify(session));
+    localStore.setItem(pairingStorageKey(), JSON.stringify(session));
     return session;
   }
   const response = await fetchWithTimeout(apiUrl('/api/sessions'), {
@@ -267,7 +293,7 @@ async function registerPairingSession(session) {
   session.pairCode = registered.pairCode;
   session.pairExpiresAt = registered.pairExpires * 1000;
   activeRelaySession = session;
-  localStorage.setItem(pairingStorageKey(), JSON.stringify(session));
+  localStore.setItem(pairingStorageKey(), JSON.stringify(session));
   return session;
 }
 
@@ -298,12 +324,12 @@ function pairingUri(session) {
 
 function readPairingSession() {
   try {
-    const session = JSON.parse(localStorage.getItem(pairingStorageKey()));
+    const session = JSON.parse(localStore.getItem(pairingStorageKey()));
     if ((session?.version === 1 || session?.version === 2) && session.expiresAt > Date.now()) return session;
   } catch (_) {
     // Corrupt local state is treated as revoked.
   }
-  localStorage.removeItem(pairingStorageKey());
+  localStore.removeItem(pairingStorageKey());
   return null;
 }
 
@@ -416,7 +442,7 @@ function revokePairing(message = 'Đã thu hồi phiên ghép nối') {
     liveKitRoom = undefined;
   }
   activeRelaySession = undefined;
-  localStorage.removeItem(pairingStorageKey());
+  localStore.removeItem(pairingStorageKey());
   window.clearInterval(expiryTimer);
   const badge = document.querySelector('#sessionBadge');
   badge.classList.remove('success');
@@ -701,11 +727,14 @@ async function publishFrames(initialSession, generation) {
     const startedAt = performance.now();
     try {
       const blob = await frameBlob();
+      if (!relayRunning || generation !== relayGeneration) break;
       if (!blob) throw new Error('jpeg_failed');
       const response = await fetchWithTimeout(
         apiUrl(`/api/rooms/${session.room}/frame?token=${encodeURIComponent(session.token)}`),
         { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob },
       );
+      await studioRuntime.discardResponse(response);
+      if (!relayRunning || generation !== relayGeneration) break;
       if (!response.ok) throw new Error(`publish_${response.status}`);
       publishedFrames += 1;
       measuredFrames += 1;
@@ -739,6 +768,11 @@ async function publishFrames(initialSession, generation) {
 }
 
 async function startDesktopSource(showPairingAfter = false) {
+  if (sourceStartInFlight) return false;
+  sourceStartInFlight = true;
+  const sourceRun = ++sourceGeneration;
+  const isCurrentSource = () => sourceRun === sourceGeneration;
+  let acquiredStream;
   startRelay.disabled = true;
   startRelay.textContent = 'Đang mở nguồn…';
   try {
@@ -747,33 +781,37 @@ async function startDesktopSource(showPairingAfter = false) {
       throw new Error('media_unsupported');
     }
     relayRunning = false;
-    const generation = ++relayGeneration;
+    relayGeneration += 1;
     stopCanvasPump();
     stopPreviewPump();
     const selectedAudioId = audioDevice.value;
     const desiredFps = Number(outputFps.value);
-    const nextStream = await openDesktopStream(selectedVideoId, selectedAudioId, desiredFps);
-    if (generation !== relayGeneration) {
-      nextStream.getTracks().forEach((track) => track.stop());
-      return false;
-    }
-    try {
-      if (liveKitRoom) await liveKitRoom.disconnect();
-    } catch (error) {
-      nextStream.getTracks().forEach((track) => track.stop());
-      throw error;
-    }
+    const previousStream = activeStream;
+    const previousRoom = liveKitRoom;
+    activeStream = undefined;
     liveKitRoom = undefined;
-    activeStream?.getTracks().forEach((track) => track.stop());
+    videoPreview.pause();
+    videoPreview.srcObject = null;
+    studioRuntime.record('source-start');
+    const nextStream = await studioRuntime.replaceSource({
+      previous: previousStream,
+      disconnect: () => previousRoom ? previousRoom.disconnect() : Promise.resolve(),
+      acquire: () => openDesktopStream(selectedVideoId, selectedAudioId, desiredFps),
+      isCurrent: isCurrentSource,
+    });
+    if (!nextStream) return false;
+    acquiredStream = nextStream;
     activeStream = nextStream;
     await populateDevices(
       activeStream.getVideoTracks()[0]?.getSettings().deviceId || selectedVideoId,
       activeStream.getAudioTracks()[0]?.getSettings().deviceId || selectedAudioId,
     );
+    if (!isCurrentSource()) return false;
     videoPreview.srcObject = activeStream;
     videoPreview.hidden = true;
     document.querySelector('.preview-empty').hidden = true;
     await videoPreview.play();
+    if (!isCurrentSource()) return false;
     configureRelayCanvas(activeStream.getVideoTracks()[0]);
     relayCanvas.hidden = false;
     startPreviewPump();
@@ -785,6 +823,7 @@ async function startDesktopSource(showPairingAfter = false) {
     try {
       session = await ensurePairingSession(false);
     } catch (error) {
+      if (!isCurrentSource()) return false;
       const message = isUsbMode
         ? 'Preview đã mở; chưa nối được đường truyền USB. Kiểm tra cáp và dịch vụ USB trên máy tính rồi bấm lại.'
         : 'Preview đã mở; chưa tạo được phiên Internet. Kiểm tra khóa truy cập rồi bấm lại.';
@@ -793,17 +832,20 @@ async function startDesktopSource(showPairingAfter = false) {
       startRelay.textContent = 'Thử kết nối lại';
       return true;
     }
+    if (!isCurrentSource()) return false;
     renderPairing(session);
     relayStatus.textContent = session.transport === 'livekit'
       ? 'Nguồn đã mở; đang kết nối Internet…'
       : 'Nguồn đã mở; đang gửi frame đầu tiên qua USB…';
     startRelay.textContent = 'Đổi / khởi động lại nguồn';
-    void publishFrames(session, generation);
+    void publishFrames(session, relayGeneration);
     if (showPairingAfter) setSheet(pairingSheet);
     return true;
   } catch (error) {
+    if (!isCurrentSource()) return false;
+    studioRuntime.record('source-start-failed', error);
     stopPreviewPump();
-    activeStream?.getTracks().forEach((track) => track.stop());
+    studioRuntime.stopStream(activeStream);
     activeStream = undefined;
     videoPreview.srcObject = null;
     videoPreview.hidden = true;
@@ -820,14 +862,20 @@ async function startDesktopSource(showPairingAfter = false) {
     setPairingLiveState(errorMessage);
     return false;
   } finally {
+    if (acquiredStream && !isCurrentSource()) {
+      studioRuntime.stopStream(acquiredStream);
+      if (activeStream === acquiredStream) activeStream = undefined;
+    }
+    sourceStartInFlight = false;
     startRelay.disabled = false;
+    if (!isCurrentSource()) startRelay.textContent = 'Bật camera / OBS';
   }
 }
 
 startRelay.addEventListener('click', () => { void startDesktopSource(); });
 document.querySelectorAll('.permission-button').forEach((button) => {
   button.addEventListener('click', () => {
-    document.querySelector('#computerSource').click();
+    document.querySelector(isUsbMode ? '#nearSource' : '#computerSource').click();
     void startDesktopSource();
   });
 });
@@ -843,3 +891,32 @@ if ('serviceWorker' in navigator) {
     });
   }).catch(() => {});
 }
+
+window.addEventListener('pagehide', () => {
+  studioRuntime.record('page-hidden');
+  relayRunning = false;
+  relayGeneration += 1;
+  sourceGeneration += 1;
+  stopCanvasPump();
+  stopPreviewPump();
+  studioRuntime.stopStream(activeStream);
+  activeStream = undefined;
+  videoPreview.srcObject = null;
+  const room = liveKitRoom;
+  liveKitRoom = undefined;
+  if (room) void room.disconnect().catch(() => {});
+  window.clearInterval(expiryTimer);
+});
+window.addEventListener('pageshow', (event) => {
+  if (!event.persisted) return;
+  videoPreview.hidden = true;
+  relayCanvas.hidden = true;
+  sourceFrameWidth = 0;
+  sourceFrameHeight = 0;
+  document.querySelector('.preview-empty').hidden = false;
+  previewResolution.textContent = 'Chưa có nguồn';
+  relayStatus.textContent = 'Nguồn đã đóng khi rời trang. Bấm Bật camera / OBS để mở lại.';
+  startRelay.textContent = 'Bật camera / OBS';
+  startRelay.disabled = sourceStartInFlight;
+});
+studioRuntime.markReady();

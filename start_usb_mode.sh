@@ -3,7 +3,7 @@ set -euo pipefail
 
 studio_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 port=4173
-url="https://campoc.onrender.com/"
+url="https://campoc.onrender.com/?transport=usb"
 bundled_python="${HOME}/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3"
 if [[ -n "${CAM_STUDIO_PYTHON:-}" ]]; then
   python_bin="$CAM_STUDIO_PYTHON"
