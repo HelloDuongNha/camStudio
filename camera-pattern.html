@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="vi"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bảng thử camera 1080×1920</title>
+<style>*{box-sizing:border-box}body{margin:0;background:#17171b;color:white;font:14px system-ui;text-align:center}canvas{display:block;width:auto;max-width:100%;height:calc(100dvh - 70px);margin:auto;object-fit:contain}p{margin:8px}button{font:inherit}</style>
+<canvas id="pattern" width="1080" height="1920" aria-label="Lưới, vòng tròn, dấu TL TR BL BR và số frame"></canvas>
+<p><button id="save" type="button">Tải PNG bảng thử</button> • <a style="color:#cabdff" href="camera-check.html">Trang đo camera</a></p>
+<script>
+const canvas=document.getElementById('pattern'),ctx=canvas.getContext('2d');
+let count=0,previous=-1;
+function draw(time){
+  const tick=Math.floor(time/100);
+  if(tick!==previous){
+    previous=tick;count++;
+    ctx.fillStyle='#f8f8f8';ctx.fillRect(0,0,1080,1920);
+    ctx.strokeStyle='#989898';ctx.lineWidth=2;
+    for(let x=0;x<=1080;x+=120){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,1920);ctx.stroke();}
+    for(let y=0;y<=1920;y+=120){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(1080,y);ctx.stroke();}
+    ctx.strokeStyle='#111';ctx.lineWidth=12;ctx.strokeRect(12,12,1056,1896);
+    for(const [label,x,y,color]of[['TL',100,100,'#a51d29'],['TR',980,100,'#065ea8'],['BL',100,1820,'#006c3b'],['BR',980,1820,'#6a2397']]){
+      ctx.fillStyle=color;ctx.fillRect(x-75,y-65,150,130);ctx.fillStyle='white';ctx.font='bold 60px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(label,x,y);
+    }
+    ctx.strokeStyle='#111';ctx.lineWidth=8;ctx.beginPath();ctx.arc(540,960,300,0,Math.PI*2);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(180,960);ctx.lineTo(900,960);ctx.moveTo(540,600);ctx.lineTo(540,1320);ctx.stroke();
+    ctx.fillStyle='#111';ctx.font='bold 48px sans-serif';ctx.fillText('DEMO • CAMERA GRID',540,350);
+    ctx.font='40px sans-serif';ctx.fillText('1080 × 1920 • 9:16',540,430);
+    ctx.fillText('FRAME '+String(count).padStart(6,'0'),540,1480);
+    ctx.font='30px sans-serif';ctx.fillText('Số frame bảng thử, không phải FPS camera',540,1550);
+  }
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+document.getElementById('save').onclick=()=>{const link=document.createElement('a');link.download='camera-grid-1080x1920.png';link.href=canvas.toDataURL('image/png');link.click();};
+</script></html>

@@ -11,6 +11,10 @@ const publicFiles = new Set([
   '/index.html',
   '/styles.css',
   '/sw.js',
+  '/camera-check.html',
+  '/camera-check.js',
+  '/camera-metrics.js',
+  '/camera-pattern.html',
   '/vendor/livekit-client.umd.js',
   '/vendor/qrcode.js',
 ]);

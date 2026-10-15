@@ -5,6 +5,7 @@
   "description": "Cam Virtual local media relay and control plane",
   "type": "module",
   "scripts": {
+    "test": "node --test test/*.test.js",
     "start": "node server.js",
     "lan": "python3 server.py",
     "serve": "node server.js"

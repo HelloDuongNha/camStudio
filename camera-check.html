@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="vi">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kiểm tra khung camera</title>
+<style>
+  *{box-sizing:border-box}body{margin:0;background:#111116;color:#f3f1ff;font:14px/1.45 system-ui}
+  main{max-width:960px;margin:auto;padding:16px}h1{font-size:clamp(22px,4vw,32px);line-height:1.2}h2{font-size:19px}
+  p,small{color:#c8c3d6}a{color:#c9bbff}button,select{font:inherit;padding:12px;border-radius:12px;border:1px solid #666;background:#282431;color:inherit;max-width:100%}
+  button{cursor:pointer}button:disabled{opacity:.5;cursor:default}button.primary{background:#cabdff;color:#201439;border:0}
+  .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin-block:20px}.controls label{display:grid;gap:5px;flex:1 1 260px}
+  .panel{background:#1c1923;padding:16px;border-radius:16px;margin-block:16px;min-width:0}.status{min-height:1.5em}
+  video{display:block;width:100%;height:auto;max-height:55vh;object-fit:contain;background:#08070b;border-radius:10px}
+  [hidden]{display:none!important}dl{display:grid;grid-template-columns:minmax(120px,1fr) minmax(0,2fr);gap:10px;margin:0}dt{color:#c8c3d6}dd{margin:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+  pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}.notice{border-left:3px solid #cabdff;padding-left:12px}
+  @media(max-width:420px){main{padding:12px}.panel{padding:12px}dl{grid-template-columns:100px minmax(0,1fr);gap:8px}dt{font-size:12px}}
+</style>
+<main>
+  <h1>Kiểm tra khung camera</h1>
+  <p>Khung thực nhận và nhịp callback • tối đa 30 giây.</p>
+  <p class="notice">Chỉ đo thông số. Không lưu ảnh hoặc âm thanh. Camera tự đóng khi dừng hoặc rời trang.</p>
+  <div class="controls">
+    <label>Cấu hình yêu cầu
+      <select id="profile">
+        <option value="default">Tự động — không yêu cầu kích thước</option>
+        <option value="hd">HD — yêu cầu 1920×1080</option>
+        <option value="portrait">Dọc — yêu cầu 1080×1920</option>
+      </select>
+    </label>
+    <button id="start" class="primary" type="button">Bắt đầu đo</button>
+    <button id="stop" type="button" disabled>Dừng</button>
+  </div>
+  <p id="status" class="status" role="status" aria-live="polite">Chưa mở camera.</p>
+  <section id="preview" class="panel" hidden>
+    <h2>Video nhận trong Browser</h2>
+    <p>Fit toàn khung • trang không thêm zoom/crop.</p>
+    <video id="video" autoplay muted playsinline></video>
+  </section>
+  <section class="panel" aria-label="Thông số camera">
+    <dl>
+      <dt>Trang yêu cầu</dt><dd id="requested">Chưa đo</dd>
+      <dt>Track báo</dt><dd id="settings">Chưa đo</dd>
+      <dt>Video thực nhận</dt><dd id="received">Chưa có callback</dd>
+      <dt>Nhịp quan sát</dt><dd id="rate">Chưa đo</dd>
+    </dl>
+  </section>
+  <section class="panel">
+    <details><summary>Cách đọc kết quả và phạm vi dữ liệu</summary>
+    <p>Trang không lưu cookie, token hoặc lưu lượng của website khác. Kết quả không đánh giá xác minh danh tính.</p>
+    <p>Track có thể báo 1920×1080 trong khi video sau xoay là 1080×1920. Kích thước của ô preview trên màn hình không phải độ phân giải nguồn.</p>
+    <p>30 FPS trong cấu hình là thông số yêu cầu hoặc được khai báo. Callback/giây là nhịp trang quan sát được; không chứng minh từng ảnh khác nhau hay độ trễ toàn tuyến.</p>
+    <p>Nếu cấu hình không được hỗ trợ, trang báo lỗi và giữ nguyên yêu cầu, không âm thầm chuyển sang kích thước khác.</p>
+    </details>
+    <a href="camera-pattern.html" target="_blank" rel="noopener">Mở bảng thử lưới và bốn góc</a>
+  </section>
+  <section id="resultPanel" class="panel" hidden>
+    <h2>Kết quả lượt đo</h2>
+    <button id="download" type="button">Tải JSON thông số</button>
+    <button id="copy" type="button">Sao chép JSON</button>
+    <p id="exportStatus" role="status"></p>
+    <pre id="result"></pre>
+  </section>
+</main>
+<script type="module" src="camera-check.js"></script>
+</html>

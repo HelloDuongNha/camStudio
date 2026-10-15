@@ -55,6 +55,23 @@ Studio tự chọn LiveKit trên Render/Vercel và relay cục bộ khi chạy b
 
 ## Kiểm tra nhanh bằng UI
 
+### Kiểm tra camera độc lập
+
+- Mở `/camera-check.html` trên thiết bị cần đo, qua HTTPS hoặc localhost.
+  Trang phân biệt yêu cầu của trang, settings của track, kích thước callback
+  video và callback/giây. Ba chế độ là tự động, exact 1920×1080 và exact
+  1080×1920; chế độ không được hỗ trợ sẽ báo lỗi thay vì tự fallback.
+- Mỗi lượt tối đa 30 giây. Dừng hoặc rời trang sẽ đóng track, kể cả khi
+  người dùng đang chờ hộp thoại quyền camera. Không lưu ảnh/âm thanh và
+  không gửi dữ liệu đo tới server; JSON chỉ tải khi người dùng bấm tải.
+- `/camera-pattern.html` là bảng thử trung tính 1080×1920 có lưới, vòng
+  tròn, dấu TL/TR/BL/BR và bộ đếm ảnh. Dùng để quan sát mất góc, kéo méo
+  và hướng gương; nó không phải công cụ đánh giá xác minh danh tính.
+- `npm test` kiểm tra cách tính số đo, lọc trường nhận dạng thiết bị và
+  vòng đời capture (hủy khi đang chờ quyền, timeout, đóng track, bắt đầu lại).
+
+### Studio
+
 1. Kiểm tra bố cục ở desktop và màn hình hẹp.
 2. Đổi sáng/tối và tải lại trang để xác nhận theme được lưu.
 3. Thử Fit/Fill/Crop, hai slider và Đặt lại khung.
