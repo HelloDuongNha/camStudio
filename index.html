@@ -1,251 +1,46 @@
 <!doctype html>
-<html lang="vi" data-theme="light">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f8f7fc" />
-    <meta name="description" content="Cam Virtual — không gian điều khiển nguồn camera và microphone cho thiết bị của bạn." />
-    <title>Cam Virtual Studio</title>
-    <link rel="stylesheet" href="styles.css?v=google-account-15" />
-  </head>
-  <body>
-    <aside id="studioRecovery" role="alert" hidden style="position:fixed;z-index:10000;inset:12px 12px auto;padding:16px;border:2px solid #a18aff;border-radius:14px;background:#24202f;color:#fff;font:14px/1.5 system-ui;max-width:680px;box-shadow:0 8px 32px #0006">
-      <strong>Studio gặp lỗi tải hoặc chạy giao diện.</strong>
-      <p>Giữ trang này để xem trạng thái. Tải lại sẽ dừng nguồn đang mở; sau đó bạn có thể bật lại camera/OBS.</p>
-      <button id="studioReload" type="button">Tải lại Studio</button>
-      <button id="studioCopyHealth" type="button">Sao chép mốc lỗi</button>
-      <button id="studioDismiss" type="button">Đóng thông báo</button>
-      <p id="studioHealthStatus"></p>
-    </aside>
-    <svg class="icon-sprite" aria-hidden="true">
-      <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h8A2.5 2.5 0 0 1 17 7.5v.9l2.6-1.7A.9.9 0 0 1 21 7.45v9.1a.9.9 0 0 1-1.4.75L17 15.6v.9a2.5 2.5 0 0 1-2.5 2.5h-8A2.5 2.5 0 0 1 4 16.5v-9Z"/></symbol>
-      <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 15.25A3.25 3.25 0 0 0 15.25 12V6a3.25 3.25 0 0 0-6.5 0v6A3.25 3.25 0 0 0 12 15.25Zm-6.5-3.7a.75.75 0 0 1 1.5 0 5 5 0 0 0 10 0 .75.75 0 0 1 1.5 0 6.5 6.5 0 0 1-5.75 6.46V20h2.5a.75.75 0 0 1 0 1.5h-6.5a.75.75 0 0 1 0-1.5h2.5v-1.99A6.5 6.5 0 0 1 5.5 11.55Z"/></symbol>
-      <symbol id="i-sun" viewBox="0 0 24 24"><path d="M12 7.25A4.75 4.75 0 1 0 12 16.75 4.75 4.75 0 0 0 12 7.25Zm0-5.5a.75.75 0 0 1 .75.75V4a.75.75 0 0 1-1.5 0V2.5a.75.75 0 0 1 .75-.75Zm0 17.5a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V20a.75.75 0 0 1 .75-.75ZM2.5 11.25H4a.75.75 0 0 1 0 1.5H2.5a.75.75 0 0 1 0-1.5Zm17.5 0h1.5a.75.75 0 0 1 0 1.5H20a.75.75 0 0 1 0-1.5ZM5.28 4.22l1.06 1.06a.75.75 0 1 1-1.06 1.06L4.22 5.28a.75.75 0 0 1 1.06-1.06Zm12.38 12.38 1.06 1.06a.75.75 0 1 1-1.06 1.06l-1.06-1.06a.75.75 0 0 1 1.06-1.06Zm1.06-11.32-1.06 1.06a.75.75 0 0 1-1.06-1.06l1.06-1.06a.75.75 0 1 1 1.06 1.06ZM6.34 17.66l-1.06 1.06a.75.75 0 0 1-1.06-1.06l1.06-1.06a.75.75 0 1 1 1.06 1.06Z"/></symbol>
-      <symbol id="i-grid" viewBox="0 0 24 24"><path d="M4.75 3A1.75 1.75 0 0 0 3 4.75v4.5C3 10.22 3.78 11 4.75 11h4.5C10.22 11 11 10.22 11 9.25v-4.5C11 3.78 10.22 3 9.25 3h-4.5Zm10 0A1.75 1.75 0 0 0 13 4.75v4.5c0 .97.78 1.75 1.75 1.75h4.5C20.22 11 21 10.22 21 9.25v-4.5C21 3.78 20.22 3 19.25 3h-4.5Zm-10 10A1.75 1.75 0 0 0 3 14.75v4.5C3 20.22 3.78 21 4.75 21h4.5C10.22 21 11 20.22 11 19.25v-4.5C11 13.78 10.22 13 9.25 13h-4.5Zm10 0A1.75 1.75 0 0 0 13 14.75v4.5c0 .97.78 1.75 1.75 1.75h4.5C20.22 21 21 20.22 21 19.25v-4.5C21 13.78 20.22 13 19.25 13h-4.5Z"/></symbol>
-      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8.2 5.25a1.5 1.5 0 0 1 2.25-1.3l9.1 5.25a1.5 1.5 0 0 1 0 2.6l-9.1 5.25a1.5 1.5 0 0 1-2.25-1.3V5.25Z"/></symbol>
-      <symbol id="i-link" viewBox="0 0 24 24"><path d="M9.17 14.83a.75.75 0 0 1 0-1.06l4.6-4.6a.75.75 0 1 1 1.06 1.06l-4.6 4.6a.75.75 0 0 1-1.06 0Zm-3.71 3.71a4.5 4.5 0 0 1 0-6.36l2.12-2.12a4.5 4.5 0 0 1 5.97-.34.75.75 0 0 1-.94 1.17 3 3 0 0 0-3.97.23l-2.12 2.12a3 3 0 0 0 4.24 4.24l2.12-2.12a3 3 0 0 0 .23-3.97.75.75 0 1 1 1.17-.94 4.5 4.5 0 0 1-.34 5.97l-2.12 2.12a4.5 4.5 0 0 1-6.36 0Zm13.08-13.08a4.5 4.5 0 0 1 0 6.36l-2.12 2.12a4.5 4.5 0 0 1-5.97.34.75.75 0 1 1 .94-1.17 3 3 0 0 0 3.97-.23l2.12-2.12a3 3 0 0 0-4.24-4.24l-2.12 2.12a3 3 0 0 0-.23 3.97.75.75 0 0 1-1.17.94 4.5 4.5 0 0 1 .34-5.97l2.12-2.12a4.5 4.5 0 0 1 6.36 0Z"/></symbol>
-      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m8.47 4.97 6.5 6.5a.75.75 0 0 1 0 1.06l-6.5 6.5a.75.75 0 0 1-1.06-1.06L13.38 12 7.41 6.03a.75.75 0 0 1 1.06-1.06Z"/></symbol>
-      <symbol id="i-x" viewBox="0 0 24 24"><path d="M5.47 5.47a.75.75 0 0 1 1.06 0L12 10.94l5.47-5.47a.75.75 0 1 1 1.06 1.06L13.06 12l5.47 5.47a.75.75 0 0 1-1.06 1.06L12 13.06l-5.47 5.47a.75.75 0 0 1-1.06-1.06L10.94 12 5.47 6.53a.75.75 0 0 1 0-1.06Z"/></symbol>
-      <symbol id="i-check" viewBox="0 0 24 24"><path d="M20.03 6.47a.75.75 0 0 1 0 1.06l-10 10a.75.75 0 0 1-1.06 0l-5-5a.75.75 0 0 1 1.06-1.06L9.5 15.94l9.47-9.47a.75.75 0 0 1 1.06 0Z"/></symbol>
-    </svg>
-
-    <header class="app-bar">
-      <a class="brand" href="#studio" aria-label="Cam Virtual — về Studio">
-        <span class="brand-mark"><svg><use href="#i-camera" /></svg></span>
-        <span><strong>Cam Virtual</strong><small>Studio</small></span>
-      </a>
-      <nav class="desktop-nav" aria-label="Điều hướng chính">
-        <a class="active" href="#studio">Studio</a>
-        <a href="#sources">Nguồn</a>
-        <a href="#activity">Hoạt động</a>
-      </nav>
-      <div class="bar-actions">
-        <span class="status-badge neutral" id="sessionBadge"><span></span>Chưa ghép nối</span>
-        <button class="icon-button" id="themeToggle" type="button" aria-label="Đổi giao diện sáng tối" title="Đổi giao diện">
-          <svg><use href="#i-sun" /></svg>
-        </button>
-        <button class="avatar-button" id="accountButton" type="button" aria-label="Đăng nhập tài khoản Google" title="Tài khoản">G</button>
-      </div>
-    </header>
-
-    <main class="page-shell" id="studio">
-      <section class="hero-row">
-        <div>
-          <p class="eyebrow">Không gian điều khiển</p>
-          <h1>Studio của bạn</h1>
-          <p class="subtitle">Chuẩn bị nguồn hình và tiếng trước khi kết nối với điện thoại.</p>
-        </div>
-        <button class="button secondary catalog-trigger" type="button"><svg><use href="#i-grid" /></svg>Xem component</button>
+<html lang="vi" data-theme="dark">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111116">
+  <title>Cam Studio</title><link rel="stylesheet" href="styles.css?v=studio-accounts-16">
+</head>
+<body>
+  <aside id="studioRecovery" role="alert" hidden><strong>Studio gặp lỗi tải giao diện.</strong><p>Tải lại để thử lại; nguồn đang mở sẽ dừng.</p><button id="studioReload">Tải lại</button><button id="studioCopyHealth">Sao chép mốc lỗi</button><button id="studioDismiss">Đóng</button><p id="studioHealthStatus"></p></aside>
+  <header class="studio-header"><a class="brand" href="/"><span class="brand-mark">C</span><span><strong>Cam Studio</strong><small>KHÔNG GIAN CỦA BẠN</small></span></a>
+    <div class="header-actions"><span class="account-email" id="accountEmail"></span><button class="icon-button" id="themeToggle" aria-label="Đổi giao diện">◐</button><button class="button secondary" id="logoutButton">Đăng xuất</button></div>
+  </header>
+  <main class="studio-shell">
+    <div class="studio-title"><div><p class="eyebrow">CAMERA & OBS</p><h1>Studio của bạn</h1><p>Chọn nguồn, tạo mã và kết nối với điện thoại.</p></div><span class="status-chip" id="sessionBadge">Chưa kết nối</span></div>
+    <div class="workspace-grid">
+      <section class="card preview-card" aria-labelledby="previewTitle"><div class="card-heading"><h2 id="previewTitle">Khung hình đầu ra</h2><span class="muted" id="previewResolution">Chưa có nguồn</span></div>
+        <div class="preview-stage" id="previewStage"><video id="sourcePreview" autoplay muted playsinline hidden></video><canvas id="relayCanvas" width="1080" height="1920" hidden></canvas><div class="preview-empty"><span class="empty-camera" aria-hidden="true">◉</span><strong>Nguồn hình sẽ xuất hiện ở đây</strong><p>Bấm Tạo mã ghép nối để mở camera hoặc OBS.</p></div></div>
+        <div class="preview-footer"><span class="live-dot" aria-hidden="true"></span><p id="relayStatus" role="status">Chưa phát dữ liệu</p><button class="button ghost" id="restartSource" hidden>Đổi / khởi động lại nguồn</button></div>
       </section>
-
-      <section class="card account-panel" id="accountPanel" aria-labelledby="accountTitle" hidden>
-        <div><p class="section-kicker">Tài khoản Studio</p><h2 id="accountTitle">Đăng nhập bằng Google</h2>
-          <p id="accountStatus" role="status" aria-live="polite">Đang kiểm tra đăng nhập…</p>
-          <p>Phòng và mã QR Cloud còn hạn được lưu theo tài khoản. Kết nối USB dùng trực tiếp, không cần đăng nhập.</p>
-        </div>
-        <div class="account-actions">
-          <a class="button primary" id="googleLogin" href="/api/auth?route=login&amp;transport=cloud" hidden>Tiếp tục với Google</a>
-          <button class="button secondary" id="accountLogout" type="button" hidden>Đăng xuất</button>
-          <button class="button ghost" id="closeAccount" type="button">Đóng</button>
-        </div>
-      </section>
-
-      <div class="studio-grid">
-        <section class="card preview-card" aria-labelledby="previewTitle">
-          <div class="card-heading">
-            <div>
-              <p class="section-kicker">Preview</p>
-              <h2 id="previewTitle">Khung hình đầu ra</h2>
-            </div>
-            <span class="status-badge success"><span></span>Sẵn sàng</span>
-          </div>
-
-          <div class="preview-stage" id="previewStage" aria-label="Khung preview nguồn đang phát">
-            <video id="sourcePreview" autoplay muted playsinline hidden></video>
-            <canvas id="relayCanvas" width="1080" height="1920" hidden></canvas>
-            <div class="preview-grid-lines"></div>
-            <div class="preview-empty">
-              <span class="preview-icon"><svg><use href="#i-camera" /></svg></span>
-              <strong>Chưa có nội dung</strong>
-              <span>Chọn một nguồn để bắt đầu preview</span>
-            </div>
-            <span class="preview-label" id="previewResolution">Chưa có nguồn</span>
-          </div>
-
-          <div class="preview-toolbar">
-            <div class="segmented-control" aria-label="Chế độ khung hình">
-              <button class="selected" type="button" data-mode="center">Cắt giữa</button>
-              <button type="button" data-mode="left">Xoay trái</button>
-              <button type="button" data-mode="right">Xoay phải</button>
-            </div>
-            <button class="button ghost" type="button" id="resetFrame">Đặt lại khung</button>
-          </div>
-
-          <div class="control-grid">
-            <label class="range-field">
-              <span><b>Thu phóng</b><output id="zoomValue">100%</output></span>
-              <input id="zoomRange" type="range" min="50" max="200" value="100" />
-            </label>
-            <label class="range-field">
-              <span><b>Xoay</b><output id="rotateValue">0°</output></span>
-              <input id="rotateRange" type="range" min="-180" max="180" value="0" />
-            </label>
-          </div>
+      <aside class="source-stack">
+        <section class="card source-card"><p class="section-kicker">NGUỒN PHÁT</p><h2>Kết nối của bạn</h2>
+          <div class="transport-switch" role="group" aria-label="Đường truyền"><button id="computerSource" class="selected" aria-pressed="true"><strong>Camera / OBS</strong><small>Cloud · từ xa</small></button><button id="nearSource" aria-pressed="false"><strong>Kết nối gần</strong><small>USB · trực tiếp</small></button></div>
+          <div class="source-controls"><label>Nguồn hình<select id="videoDevice"><option value="">Tự động chọn camera</option></select></label><label id="audioField">Nguồn tiếng<select id="audioDevice"><option value="">Tự động chọn micro</option></select></label>
+            <div class="quality-controls"><label>Độ phân giải<select id="outputResolution"><option value="portrait-source">Dọc 1080 × 1920</option><option value="landscape-1080">Ngang 1920 × 1080</option><option value="source">Gốc camera / OBS</option></select></label><label>FPS<select id="outputFps"><option value="30">30 fps</option><option value="60">60 fps</option></select></label></div>
+          </div><p class="transport-hint" id="transportHint">Cloud phát hình và tiếng qua LiveKit.</p>
         </section>
-
-        <aside class="side-stack" id="sources">
-          <section class="card source-card" aria-labelledby="sourceTitle">
-            <div class="card-heading compact">
-              <div>
-                <p class="section-kicker">Đầu vào</p>
-                <h2 id="sourceTitle">Chọn nguồn</h2>
-              </div>
-              <button class="icon-button" type="button" aria-label="Tùy chọn nguồn"><span class="more-icon">•••</span></button>
-            </div>
-
-            <div class="source-list" role="radiogroup" aria-label="Nguồn camera">
-              <button class="source-row selected" type="button" role="radio" aria-checked="true" data-source="Thư viện điện thoại">
-                <span class="source-symbol purple"><svg><use href="#i-play" /></svg></span>
-                <span class="source-copy"><strong>Thư viện điện thoại</strong><small>Video hoặc ảnh có sẵn</small></span>
-                <span class="radio-dot"></span>
-              </button>
-              <button class="source-row" id="computerSource" type="button" role="radio" aria-checked="false" data-source="Camera hoặc OBS trên máy tính">
-                <span class="source-symbol blue">OB</span>
-                <span class="source-copy"><strong>Camera / OBS trên máy tính</strong><small>Phát từ xa qua Cloud</small></span>
-                <span class="radio-dot"></span>
-              </button>
-              <button class="source-row" id="nearSource" type="button" role="radio" aria-checked="false" data-source="Kết nối gần">
-                <span class="source-symbol green"><svg><use href="#i-link" /></svg></span>
-                <span class="source-copy"><strong>Kết nối gần</strong><small>USB trực tiếp · không đi qua Cloud</small></span>
-                <span class="radio-dot"></span>
-              </button>
-            </div>
-            <div class="desktop-source-controls" id="desktopSourceControls" hidden>
-              <label class="text-field"><span>Nguồn hình</span><select id="videoDevice"><option value="">Tự động chọn camera</option></select></label>
-              <p id="cameraFormatHelp" class="inline-status" hidden></p>
-              <p id="projectorHelp" hidden></p>
-              <label class="text-field"><span>Nguồn tiếng</span><select id="audioDevice"><option value="">Tự động chọn</option></select></label>
-              <label class="text-field"><span>Độ phân giải xuất</span><select id="outputResolution"><option value="portrait-source">Dọc 1080×1920 • cắt giữa nguồn ngang (mặc định)</option><option value="portrait-1080">Dọc 1080×1920</option><option value="portrait-1440">Dọc 1440×2560</option><option value="landscape-1080">Ngang 1920×1080</option><option value="landscape-1440">Ngang 2560×1440</option><option value="source">Gốc của camera / OBS • mọi hướng</option></select></label>
-              <label class="text-field"><span>FPS mong muốn</span><select id="outputFps"><option value="30">30 fps (mặc định)</option><option value="60">60 fps</option></select></label>
-              <button class="button primary full" id="startRelay" type="button">Bật camera / OBS</button>
-              <p id="relayStatus" class="inline-status">Chưa phát dữ liệu.</p>
-            </div>
-          </section>
-
-          <section class="card connect-card" aria-labelledby="connectTitle">
-            <div class="connect-art"><span></span><svg><use href="#i-camera" /></svg></div>
-            <div>
-              <p class="section-kicker">Thiết bị</p>
-              <h2 id="connectTitle">Kết nối điện thoại</h2>
-              <p>Ghép nối an toàn để sử dụng nguồn này trong CamPOC.</p>
-            </div>
-            <p class="transport-hint" id="transportHint"></p>
-            <button class="button primary full" id="pairButton" type="button">Tạo mã ghép nối</button>
-          </section>
-        </aside>
-      </div>
-
-      <section class="permissions-section" id="activity" aria-labelledby="permissionTitle">
-        <div class="section-heading">
-          <div><p class="section-kicker">Quyền truy cập</p><h2 id="permissionTitle">Thiết bị trên trình duyệt này</h2></div>
-          <span class="helper-text">Bạn luôn kiểm soát quyền được dùng</span>
-        </div>
-        <div class="permission-grid">
-          <article class="permission-row">
-            <span class="source-symbol purple"><svg><use href="#i-camera" /></svg></span>
-            <span><strong>Camera</strong><small>Chưa yêu cầu quyền</small></span>
-            <button class="button tertiary permission-button" type="button" data-permission="Camera">Kiểm tra</button>
-          </article>
-          <article class="permission-row">
-            <span class="source-symbol coral"><svg><use href="#i-mic" /></svg></span>
-            <span><strong>Microphone</strong><small>Chưa yêu cầu quyền</small></span>
-            <button class="button tertiary permission-button" type="button" data-permission="Microphone">Kiểm tra</button>
-          </article>
-        </div>
-      </section>
-    </main>
-
-    <nav class="bottom-nav" aria-label="Điều hướng di động">
-      <a class="active" href="#studio"><svg><use href="#i-grid" /></svg><span>Studio</span></a>
-      <a href="#sources"><svg><use href="#i-play" /></svg><span>Nguồn</span></a>
-      <button class="catalog-trigger" type="button"><svg><use href="#i-sun" /></svg><span>Giao diện</span></button>
-    </nav>
-
-    <div class="sheet-backdrop" id="sheetBackdrop" hidden></div>
-    <section class="bottom-sheet" id="componentSheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" hidden>
-      <div class="sheet-handle"></div>
-      <header class="sheet-header">
-        <div><p class="section-kicker">Design system</p><h2 id="sheetTitle">Trạng thái component</h2></div>
-        <button class="icon-button" id="closeSheet" type="button" aria-label="Đóng"><svg><use href="#i-x" /></svg></button>
-      </header>
-      <div class="component-catalog">
-        <div class="catalog-group"><h3>Button</h3><div class="component-row"><button class="button primary">Primary</button><button class="button secondary">Secondary</button><button class="button ghost">Ghost</button><button class="button primary" disabled>Disabled</button><button class="button primary loading" aria-label="Đang tải"><span></span>Đang tải</button></div></div>
-        <div class="catalog-group"><h3>Text field</h3><div class="component-row fields"><label class="text-field"><span>Tên phiên</span><input value="Studio của tôi" /></label><label class="text-field error"><span>Mã kết nối</span><input value="12" aria-invalid="true" /><small>Mã cần có 6 ký tự</small></label></div></div>
-        <div class="catalog-group"><h3>System states</h3><div class="state-grid"><div class="state-card empty"><svg><use href="#i-camera" /></svg><strong>Chưa có nguồn</strong><span>Thêm nguồn để bắt đầu</span></div><div class="state-card loading-state"><i></i><strong>Đang kết nối</strong><span>Vui lòng chờ trong giây lát</span></div><div class="state-card error-state"><b>!</b><strong>Mất kết nối</strong><span>Kiểm tra mạng và thử lại</span></div></div></div>
-      </div>
-    </section>
-
-    <section class="bottom-sheet pairing-sheet" id="pairingSheet" role="dialog" aria-modal="true" aria-labelledby="pairingTitle" hidden>
-      <div class="sheet-handle"></div>
-      <header class="sheet-header">
-        <div><p class="section-kicker">Ghép nối an toàn</p><h2 id="pairingTitle">Kết nối CamPOC</h2></div>
-        <button class="icon-button" id="closePairing" type="button" aria-label="Đóng"><svg><use href="#i-x" /></svg></button>
-      </header>
-      <div class="pairing-layout">
-        <div class="qr-panel">
-          <div class="qr-code" id="qrCode" aria-label="Mã QR ghép nối CamPOC"></div>
-          <span class="status-badge success"><span></span>Mã đang hoạt động</span>
-        </div>
-        <div class="pairing-copy">
-          <p>Trên điện thoại, mở CamPOC rồi chọn <strong>Quét mã ghép nối</strong>. Studio tự dùng Internet hoặc mạng gần phù hợp. Không chia sẻ mã này với người khác.</p>
-          <div class="pair-code-block">
-            <span>Phòng LiveKit</span>
-            <strong id="pairingCode">••••••</strong>
-          </div>
-          <label class="pairing-link-field">
-            <span>Link ghép nối đầy đủ</span>
-            <textarea id="pairingLink" rows="3" readonly></textarea>
-          </label>
-          <p class="pairing-live-state" id="pairingLiveState">Đã có QR · chưa phát camera/mic</p>
-          <button class="button primary full-width" id="startPairingSource" type="button">Bắt đầu phát camera + mic</button>
-          <div class="expiry-row"><span>Hết hạn sau</span><strong id="pairingExpiry">10:00</strong></div>
-          <div class="pairing-actions">
-            <button class="button primary" id="copyPairing" type="button">Sao chép link</button>
-            <button class="button secondary" id="newPairing" type="button">Tạo mã mới</button>
-          </div>
-          <button class="button ghost danger-text" id="revokePairing" type="button">Thu hồi phiên này</button>
-          <p class="pairing-note" id="pairingTransportNote">Internet dùng LiveKit; khi chạy Studio cục bộ, LAN và USB tethering được ưu tiên để giảm độ trễ.</p>
-        </div>
-      </div>
-    </section>
-
-    <div class="snackbar" id="snackbar" role="status" aria-live="polite" hidden>
-      <svg><use href="#i-check" /></svg><span id="snackbarText">Đã cập nhật</span><button type="button" id="snackbarAction">Đóng</button>
+        <section class="card connect-card"><p class="section-kicker">GHÉP NỐI THIẾT BỊ</p><h2>Sẵn sàng kết nối?</h2><p>Camera và micro sẽ mở khi bạn tạo mã. Chỉ chia sẻ mã với thiết bị của bạn.</p><button class="button primary full-width" id="pairButton">Tạo mã ghép nối <span aria-hidden="true">↗</span></button></section>
+      </aside>
     </div>
-
-    <script src="studio-runtime.js?v=stability-13"></script>
-    <script src="vendor/qrcode.js"></script>
-    <script src="vendor/livekit-client.umd.js"></script>
-    <script src="app.js?v=google-account-15"></script>
-  </body>
+  </main>
+  <dialog id="pairingDialog" class="pairing-dialog" aria-labelledby="pairingTitle">
+    <header class="pairing-header"><div><p class="section-kicker">GHÉP NỐI THIẾT BỊ</p><h2 id="pairingTitle">Kết nối CamPOC</h2></div><button class="icon-button" id="closePairing" aria-label="Đóng mã ghép nối">×</button></header>
+    <div class="pairing-body"><div class="qr-panel"><div id="qrCode" class="qr-code" aria-label="Mã QR riêng của phiên"></div><span class="connection-status" id="pairingConnection" role="status">Đang chuẩn bị nguồn…</span></div>
+      <div class="pairing-details"><p id="pairingInstructions">Quét QR bằng CamPOC, hoặc nhập mã phòng và mật khẩu trên điện thoại.</p>
+        <div class="credential-card"><div><span>MÃ PHÒNG</span><strong id="pairingCode">— — —</strong></div><button class="copy-icon" id="copyCode" aria-label="Sao chép mã phòng" title="Sao chép mã phòng">⧉</button></div>
+        <div class="credential-card password-card" id="passwordCard"><div><span>MẬT KHẨU</span><strong id="pairingPassword">— — —</strong></div><button class="copy-icon" id="copyPassword" aria-label="Sao chép mật khẩu" title="Sao chép mật khẩu">⧉</button></div>
+        <div class="compact-link"><span>Liên kết ghép nối riêng</span><button id="copyPairing" class="button ghost">⧉ Sao chép</button></div>
+        <div class="expiry-row"><span>Hết hạn sau</span><strong id="pairingExpiry">—:—</strong></div>
+        <button id="newPairing" class="button primary full-width">↻ Tạo mã mới</button>
+        <p class="pairing-note">Tạo mã mới sẽ ngắt phòng cũ. Đóng bảng khi chưa có thiết bị kết nối sẽ hủy mã này.</p>
+      </div>
+    </div>
+  </dialog>
+  <div class="snackbar" id="snackbar" role="status" hidden><span id="snackbarText"></span><button id="snackbarAction" aria-label="Đóng thông báo">×</button></div>
+  <script src="studio-runtime.js?v=studio-accounts-16"></script><script src="vendor/qrcode.js"></script><script src="vendor/livekit-client.umd.js"></script><script src="app.js?v=studio-accounts-16"></script>
+</body>
 </html>

@@ -3,6 +3,8 @@ import importlib.util
 from pathlib import Path
 import threading
 import unittest
+import json
+import time
 
 spec = importlib.util.spec_from_file_location("relay_under_test", Path(__file__).resolve().parents[1] / "server.py")
 relay = importlib.util.module_from_spec(spec)
@@ -27,10 +29,11 @@ class RelayHTTPTest(unittest.TestCase):
         cls.server.server_close()
         cls.worker.join(timeout=2)
 
-    def request(self, path):
+    def request(self, path, method="GET", payload=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
         try:
-            connection.request("GET", path, headers={"Origin": "https://campoc.onrender.com"})
+            connection.request(method, path, body=json.dumps(payload) if payload is not None else None,
+                               headers={"Origin": "https://campoc.onrender.com", "Content-Type": "application/json"})
             response = connection.getresponse()
             return response.status, dict(response.getheaders()), response.read()
         finally:
@@ -54,6 +57,35 @@ class RelayHTTPTest(unittest.TestCase):
         status, _, body = self.request("/camera-check.html")
         self.assertEqual(status, 200)
         self.assertIn(b"camera-check.js", body)
+
+    def register(self, room, token):
+        return self.request("/api/sessions", "POST", {"room": room, "token": token, "expires": int(time.time()) + 600})
+
+    def test_room_collision_cannot_overwrite_another_token(self):
+        self.assertEqual(self.register("ABCDXY", "A" * 32)[0], 201)
+        self.assertEqual(self.register("ABCDXY", "B" * 32)[0], 409)
+        self.assertEqual(relay.SESSIONS["ABCDXY"]["token"], "A" * 32)
+
+    def test_unused_room_closes_and_removes_credential(self):
+        self.register("BCDEFG", "C" * 32)
+        status, _, body = self.request("/api/rooms/BCDEFG/close", "POST", {"token": "C" * 32})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["removed"])
+        self.assertNotIn("BCDEFG", relay.SESSIONS)
+
+    def test_room_with_camera_consumer_is_kept_when_modal_closes(self):
+        self.register("CDEFGH", "D" * 32)
+        self.request("/api/rooms/CDEFGH/frame?token=" + "D" * 32)
+        status, _, body = self.request("/api/rooms/CDEFGH/close", "POST", {"token": "D" * 32})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["kept"])
+        self.assertIn("CDEFGH", relay.SESSIONS)
+
+    def test_stale_token_cannot_close_a_current_usb_room(self):
+        self.register("DEFGHJ", "E" * 32)
+        _, _, body = self.request("/api/rooms/DEFGHJ/close", "POST", {"token": "F" * 32})
+        self.assertFalse(json.loads(body)["removed"])
+        self.assertIn("DEFGHJ", relay.SESSIONS)
 
 
 if __name__ == "__main__":

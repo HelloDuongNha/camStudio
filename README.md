@@ -1,112 +1,92 @@
-# camStudio
+# Cam Studio
 
-Studio phát camera/microphone từ trình duyệt máy tính sang VirtualCamPoC trên Android. Khi chạy trên Render/Vercel, Studio dùng LiveKit Cloud để hoạt động qua Internet; khi chạy relay Python trên máy tính, Studio dùng LAN/USB tethering để giảm độ trễ.
+Studio phát camera/OBS từ máy tính tới CamPOC qua LiveKit Cloud hoặc relay USB. Người dùng đăng nhập/đăng ký Google trước khi vào Studio; có Đăng xuất trong giao diện. Không sử dụng khóa truy cập nhập tay.
 
-## Chạy cục bộ
+## Hành vi ghép nối
 
-Để dùng LiveKit giống production, cấu hình `.env` trong shell rồi chạy `npm start`. Để dùng relay LAN/USB cục bộ, chạy:
+- Bấm **Tạo mã ghép nối** sẽ mở nguồn camera/microphone và bắt đầu phát. Không có nút phát thứ hai trong modal.
+- Cloud dùng mã phòng 6 ký tự và mật khẩu ngẫu nhiên 10 ký tự. QR/link ngắn chứa thông tin mời ghép nối; không chứa JWT LiveKit.
+- MongoDB giữ chủ sở hữu, mã duy nhất, phiên bản phòng, trạng thái và hạn dùng. Mật khẩu được hash bằng scrypt và mã hóa AES-GCM để chủ tài khoản mở lại QR. Không lưu video hoặc mật khẩu Google vào database.
+- Mỗi phòng cho một thiết bị nhận ghép nối. Cùng thiết bị có thể thử lại; các tiến trình preview/Browser trên thiết bị có thể nhận media độc lập qua credential riêng.
+- Tạo mã mới khóa mã/password/credential cũ trong database trước khi xóa phòng media cũ. Phòng media dùng ID riêng ngẫu nhiên, không trùng mã công khai. Lock theo tài khoản và unique indexes bảo vệ thao tác đồng thời.
+- Đóng modal khi chưa có thiết bị kết nối sẽ hủy phòng và dừng nguồn. Phòng đã kết nối được giữ khi đóng modal. Trạng thái kết nối Cloud được đối chiếu qua LiveKit, không chỉ dựa vào việc phát nguồn.
+- QR còn hạn được khôi phục theo tài khoản nhưng không tự mở camera khi tải trang. Thời hạn mặc định: đăng nhập 30 ngày, ghép nối 1 giờ.
 
-```bash
-npm run lan
+## Máy chủ
+
+Render chạy **Node Web Service**, không phải Static Site. Node >=22.9.0. Google OAuth được xác minh ở server; cookie đăng nhập HttpOnly/Secure. `/`, `/index.html`, `/studio` yêu cầu đăng nhập từ server. `/login` và `/signup` là cửa vào công khai. Các API chủ phòng kiểm tra quyền riêng, không dựa vào chặn giao diện.
+
+| Biến môi trường | Nội dung |
+| --- | --- |
+| `APP_ORIGIN` | `https://campoc.onrender.com` |
+| `MONGODB_URI` | Connection string MongoDB Atlas, chỉ ở server |
+| `MONGODB_DATABASE` | `camstudio` |
+| `ROOM_SECRET_KEY` | 32 byte ngẫu nhiên, biểu diễn 64 ký tự hex; giữ ổn định và sao lưu riêng |
+| `GOOGLE_CLIENT_ID` | OAuth client loại Web application |
+| `GOOGLE_CLIENT_SECRET` | Secret của OAuth client |
+| `LIVEKIT_URL` | URL wss LiveKit Cloud hiện tại |
+| `LIVEKIT_API_KEY` | Key LiveKit ở server |
+| `LIVEKIT_API_SECRET` | Secret LiveKit ở server |
+| `REDIS_URL` | Tùy chọn, kết nối Redis riêng cho dịch vụ |
+| `TRUST_PROXY_HOPS` | Số proxy được tin cậy khi lấy IP rate-limit; Render đặt `1`, local `0` |
+
+Không đưa `.env`, file `client_secret*.json` hoặc secret vào Git. `npm start` nạp `.env` cục bộ nếu có; biến Render Environment được ưu tiên. Đã bỏ PostgreSQL và `CAMSTUDIO_ACCESS_KEY`.
+
+Server tự tạo indexes MongoDB khi cần. User Atlas chỉ cần `readWrite` trên database `camstudio`. Giới hạn IP truy cập Atlas theo máy quản trị/địa chỉ outbound của Render; không mở toàn Internet nếu không có quyết định rõ ràng của chủ hệ thống.
+
+Redis dùng cho giới hạn lượt thử và cache presence 1,5 giây. MongoDB vẫn kiểm tra giới hạn/quyền thực tế. Khi Redis ngắt hoặc chưa cấu hình, server quay về MongoDB; hủy phòng luôn kiểm tra presence mới, không dựa vào cache. Không truyền frame camera qua Redis. Điều này giảm truy vấn trạng thái/abuse overhead, không phải bằng chứng tăng FPS video.
+
+## Google OAuth
+
+Mọi tài khoản Google có email được xác minh đều có thể đăng nhập; lần đầu tự tạo tài khoản. Chỉ yêu cầu `openid email profile`. Callback chính xác:
+
+`https://campoc.onrender.com/api/auth?route=callback`
+
+Audience chọn External; phát hành Production để người dùng ngoài nhóm Test users có thể đăng nhập. OAuth client Android hiện có không bị thay đổi. Xem [hướng dẫn thiết lập](docs/GOOGLE_ACCOUNT_SETUP.md).
+
+## USB
+
+Giao diện: `https://campoc.onrender.com/?transport=usb` (cũng yêu cầu đăng nhập Studio). API relay chạy riêng ở `127.0.0.1:4173`.
+
+```sh
+./start_usb_mode.sh
 ```
 
-Giao diện Studio dùng `https://campoc.onrender.com/`. Khi dùng USB, mở
-`https://campoc.onrender.com/?transport=usb`. Dịch vụ `127.0.0.1:4173` là
-relay API trên máy tính; đường dẫn `/` và `/index.html` của relay chuyển
-hướng sang giao diện Render, không duy trì thêm một bản Studio cục bộ.
+Để tự chạy sau đăng nhập macOS:
 
-## Deploy Render
+```sh
+./install_usb_autostart.sh
+```
 
-Phải tạo **Web Service**, không dùng Static Site vì `/api/session` cần chạy phía server.
+CamPOC nhận phiên qua ADB reverse. USB không dùng mật khẩu Cloud; mã/receiver token được quản lý bởi relay cục bộ. Modal USB đóng khi chưa có consumer sẽ hủy phiên; đã có consumer yêu cầu frame thì giữ. Mã trùng với token khác bị từ chối thay vì ghi đè. Cần cập nhật/chạy lại relay sau thay đổi `server.py`.
 
-- Runtime: `Node`
-- Build Command: `npm ci`
-- Start Command: `npm start`
-- Health Check Path: `/healthz`
+## Android tương thích
 
-Giữ ba biến `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` và cấu hình đăng nhập/database bên dưới. Repo có sẵn `render.yaml`. Bản này thay khóa truy cập bằng Google; cần hoàn tất cấu hình trước khi triển khai để Cloud tiếp tục dùng được. USB không cần đăng nhập.
+Cần APK CamPOC mới cho QR `camvirtual://connect` và nhập mã/password Cloud. App đổi lời mời thành credential nhận có thể thu hồi, sau đó lấy JWT ngắn hạn qua server. JWT chỉ nằm trong RAM trong lúc nối LiveKit. Browser LSPatch cũng phải nhúng module mới; chỉ cập nhật controller không cập nhật module trong Browser.
 
-## Deploy Vercel
+Không thay hook Camera2 hoặc nguồn video/ảnh local của Android. Các điều khiển thừa chỉ được bỏ khỏi giao diện web.
 
-Khai báo các biến môi trường cho đúng môi trường rồi redeploy:
+## Kiểm thử
 
-- `LIVEKIT_URL`
-- `LIVEKIT_API_KEY`
-- `LIVEKIT_API_SECRET`
-- `APP_ORIGIN` — origin HTTPS chính xác, ví dụ `https://campoc.onrender.com`
-- `DATABASE_URL` — PostgreSQL riêng, không đưa xuống frontend
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` — OAuth client loại Web application
+```sh
+npm ci
+npm test
+```
 
-Các secret chỉ tồn tại ở máy chủ. Studio không hỏi `CAMSTUDIO_ACCESS_KEY` nữa, kể cả lần đầu. Người dùng chọn tài khoản Google; phiên đăng nhập được lưu 30 ngày bằng cookie HttpOnly, Secure, SameSite=Lax và hash trong database. Đăng xuất xóa phiên đó ở server. Tài khoản Google, phòng, hạn QR được lưu trong PostgreSQL; không lưu ảnh QR, media hay token Google. QR còn hạn được dựng lại khi đăng nhập trên trình duyệt khác. Room/token Cloud không còn lưu trong localStorage. Khóa và token Cloud cũ trong storage được xóa khi mở bản mới.
+MongoDB integration tests chạy mongod thật tạm thời qua `mongodb-memory-server`; Redis test dùng `redis-server` riêng nếu được cài. Không dùng database Atlas thật trong unit/integration tests. OAuth và LiveKit ở ranh giới ngoài được giả lập; cần kiểm thử Google/Atlas/LiveKit thật sau triển khai.
 
-### Thiết lập Google và PostgreSQL
+```sh
+python3 -m unittest test/relay_http_test.py
+```
 
-1. Tạo database PostgreSQL riêng (Render Postgres hoặc dịch vụ PostgreSQL bạn đang dùng), đặt `DATABASE_URL`. Không dùng file SQLite trên filesystem tạm của Render. Dùng cấu hình TLS do nhà cung cấp yêu cầu; không tắt xác minh chứng chỉ.
-2. Trong Google Cloud Console, tạo OAuth client loại **Web application**, cấu hình consent screen và thêm tài khoản thử nếu ứng dụng còn ở Testing.
-3. Thêm Authorized redirect URI chính xác: `https://campoc.onrender.com/api/auth?route=callback`. Nếu đổi domain, đổi cả `APP_ORIGIN` và redirect URI. Không cần thêm API key Google vào giao diện.
-4. Đặt `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` và `APP_ORIGIN` trên Render/Vercel. Người dùng cuối không nhập các giá trị này. Mọi tài khoản Google có email đã xác minh đều đăng nhập được, không có danh sách giới hạn Gmail. Khi phát hành cho nhiều người dùng, chuyển Google OAuth Audience sang Production thay vì chỉ cấp Test users.
-5. Server tự tạo các bảng `studio_users`, `studio_logins`, `studio_oauth_states`, `studio_pairings` ở lần truy cập database đầu; tài khoản DB cần quyền tạo bảng/index. Sao lưu database theo chính sách nhà cung cấp.
-6. Deploy rồi chọn nút **G** → **Tiếp tục với Google**. Thử đăng xuất/đăng nhập lại và mở QR còn hạn trên trình duyệt thứ hai. Database chỉ lưu metadata, không lưu video.
+Bản UI QA cô lập (tài khoản, OAuth, video và media transport giả lập):
 
-Local Cloud development: dùng `APP_ORIGIN=http://localhost:4173` và thêm redirect URI localhost tương ứng trong Google Console. Cookie không Secure chỉ được dùng với localhost/127.0.0.1. `.env` cần được nạp vào môi trường trước khi chạy Node.
+```sh
+node test/preview-server.js
+```
 
-Mỗi tài khoản hiện giữ một phòng Cloud đang hoạt động, hạn một giờ. Đọc lại QR không kéo dài hạn. Tạo mới/đóng phòng gọi LiveKit để ngắt phòng cũ và bỏ bản ghi liên kết; token LiveKit đã phát vẫn có thể còn hiệu lực đến hạn và không được xem là đã thu hồi JWT ngay lập tức. QR USB vẫn gắn với relay cục bộ và được giữ riêng trên máy tính, không lưu như QR Cloud có thể dùng từ xa.
+Trang đo camera độc lập `/camera-check.html` và bảng `/camera-pattern.html` vẫn có sẵn. Không lấy preview/screenshot làm bằng chứng chất lượng buffer camera hoặc FPS nội dung khác nhau.
 
-## Luồng sử dụng
+## Giới hạn thu hồi media
 
-1. Mở Studio trên máy tính. Chọn camera/OBS Virtual Camera và microphone muốn phát.
-2. Với USB, chạy `./start_usb_mode.sh`, chọn **Kết nối gần** rồi bật camera/OBS. Studio tạo phiên cục bộ và VirtualCamPoC tự nhận qua `adb reverse`; không cần quét QR.
-3. Với Cloud, đăng nhập Google rồi bấm **Tạo mã ghép nối**, sau đó quét QR trong VirtualCamPoC. Mở lại trang sẽ khôi phục phòng còn hạn theo tài khoản. Với relay LAN/USB, phiên vẫn được quản lý cục bộ.
-4. Chọn nguồn đã ghép làm nguồn đang chạy, rồi mở Cam Browser/WebTest.
-
-### Nguồn OBS dọc
-
-Studio lấy trực tiếp khung do **OBS Virtual Camera** cấp. Chọn **Ưu tiên dọc 1080×1920** để yêu cầu khung dọc và kiểm tra dòng kích thước thực tế trên preview. Trên bản OBS macOS hiện tại, camera extension có thể chỉ công bố **1920×1080** ngay cả khi canvas OBS là **1080×1920**. Khi đó Studio không thể khôi phục phần trên/dưới đã bị cắt trong camera ảo; phải sửa hoặc thay camera extension xuất dọc thật sự. Đổi tùy chọn chất lượng khi đang phát cần bấm **Đổi / khởi động lại nguồn**.
-
-### Tự động kết nối USB trên macOS
-
-Chạy `./install_usb_autostart.sh` một lần. LaunchAgent sẽ tự mở relay cục bộ
-và khôi phục `adb reverse` sau mỗi lần đăng nhập, khởi động lại điện thoại hoặc
-rút/cắm lại cáp. Relay USB chỉ lắng nghe trên `127.0.0.1`.
-
-Giao diện Render dùng LiveKit khi chọn Camera / OBS qua Cloud và dùng relay
-cục bộ khi chọn Kết nối gần qua USB. Địa chỉ giao diện luôn là Render;
-`127.0.0.1:4173` chỉ là dịch vụ truyền qua cáp trên máy tính.
-
-Studio nhớ lựa chọn USB/Cloud qua tải lại trang; `?transport=usb` chọn USB
-rõ ràng. Không tự xin quyền camera hoặc bật nguồn khi chỉ mở trang.
-
-### Chẩn đoán giao diện Studio
-
-Nếu script tải/chạy thất bại, Studio hiện thông báo khôi phục với nút tải
-lại và sao chép mốc lỗi. Mốc lỗi chỉ nằm trong tab, giới hạn 20 bản ghi;
-chỉ chứa thời gian, loại lỗi, tên file mã đã cho phép và số dòng. Không
-chứa ảnh, URL phiên, token, khóa truy cập hoặc nội dung request/response.
-Nó không thể cứu tiến trình Chrome đã crash; crash native phải đối chiếu
-crash report của macOS/Chrome riêng.
-
-## Kiểm tra nhanh bằng UI
-
-### Kiểm tra camera độc lập
-
-- Mở `/camera-check.html` trên thiết bị cần đo, qua HTTPS hoặc localhost.
-  Trang phân biệt yêu cầu của trang, settings của track, kích thước callback
-  video và callback/giây. Ba chế độ là tự động, exact 1920×1080 và exact
-  1080×1920; chế độ không được hỗ trợ sẽ báo lỗi thay vì tự fallback.
-- Mỗi lượt tối đa 30 giây. Dừng hoặc rời trang sẽ đóng track, kể cả khi
-  người dùng đang chờ hộp thoại quyền camera. Không lưu ảnh/âm thanh và
-  không gửi dữ liệu đo tới server; JSON chỉ tải khi người dùng bấm tải.
-- `/camera-pattern.html` là bảng thử trung tính 1080×1920 có lưới, vòng
-  tròn, dấu TL/TR/BL/BR và bộ đếm ảnh. Dùng để quan sát mất góc, kéo méo
-  và hướng gương; nó không phải công cụ đánh giá xác minh danh tính.
-- `npm test` kiểm tra cách tính số đo, lọc trường nhận dạng thiết bị và
-  vòng đời capture (hủy khi đang chờ quyền, timeout, đóng track, bắt đầu lại).
-
-### Studio
-
-1. Kiểm tra bố cục ở desktop và màn hình hẹp.
-2. Đổi sáng/tối và tải lại trang để xác nhận theme được lưu.
-3. Thử Fit/Fill/Crop, hai slider và Đặt lại khung.
-4. Chọn **Tạo mã ghép nối**, kiểm tra QR, countdown, sao chép, tạo mã mới và thu hồi.
-5. Quét QR hoặc dán link vào CamPOC; preview phải chuyển từ “đang kết nối” sang “đang phát”.
-6. Đưa CamPOC xuống nền, mở Cam Browser và bật camera; hình phải tiếp tục chạy quá 30 giây mà không cần tắt/bật camera.
+Mã/password và lease cũ bị từ chối ngay sau khi database chuyển sang closing/xóa. JWT LiveKit được cấp ngắn tối đa 120 giây; server ngắt phòng cũ khi thay mã. JWT đã phát không thể được xem là thu hồi chữ ký tức thì, nhưng không cấp quyền vào phòng media mới và không còn được đổi lease cũ lấy JWT mới. Cần kết quả trên thiết bị thật trước khi khẳng định hành vi reconnect hoàn chỉnh.

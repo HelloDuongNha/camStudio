@@ -6,17 +6,21 @@
   "type": "module",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "start": "node server.js",
+    "start": "node --env-file-if-exists=.env server.js",
     "lan": "python3 server.py",
-    "serve": "node server.js"
+    "serve": "node --env-file-if-exists=.env server.js"
   },
   "dependencies": {
     "google-auth-library": "^11.3.1",
     "livekit-client": "2.22.3",
     "livekit-server-sdk": "2.19.0",
-    "pg": "^8.23.1"
+    "mongodb": "^7.7.0",
+    "redis": "^6.3.0"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.10"
+    "mongodb-memory-server": "^11.3.0"
+  },
+  "engines": {
+    "node": ">=22.9.0"
   }
 }

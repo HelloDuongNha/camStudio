@@ -1,1005 +1,350 @@
-const studioRuntime = window.CamStudioRuntime;
-const localStore = studioRuntime.safeStorage(() => window.localStorage);
-const sessionStore = studioRuntime.safeStorage(() => window.sessionStorage);
-const TRANSPORT_STORAGE_KEY = 'camstudio-transport-v1';
-const requestedTransport = new URLSearchParams(window.location.search).get('transport');
-const savedTransport = localStore.getItem(TRANSPORT_STORAGE_KEY);
-const root = document.documentElement;
-const themeToggle = document.querySelector('#themeToggle');
-const themeMeta = document.querySelector('meta[name="theme-color"]');
-const snackbar = document.querySelector('#snackbar');
-const snackbarText = document.querySelector('#snackbarText');
-let snackbarTimer;
-let expiryTimer;
-let relayInfo;
-let activeStream;
-let activeRelaySession;
-let relayRunning = false;
-let relayGeneration = 0;
-let sourceGeneration = 0;
-let sourceStartInFlight = false;
-let publishedFrames = 0;
-let liveKitRoom;
-let canvasCaptureStream;
-let previewFrameTimer;
-let sourceFrameWidth = 0;
-let sourceFrameHeight = 0;
-let sourceFrameRate = 0;
-let cloudPairing;
-let account;
-let accountReady;
+const runtime = window.CamStudioRuntime;
+const localStore = runtime.safeStorage(() => localStorage);
+const sessionStore = runtime.safeStorage(() => sessionStorage);
+const $ = (selector) => document.querySelector(selector);
 const USB_ORIGIN = 'http://127.0.0.1:4173';
-let isUsbMode = studioRuntime.selectedTransport(window.location.search, savedTransport) === 'usb';
-const apiUrl = (path) => isUsbMode ? `${USB_ORIGIN}${path}` : path;
+const USB_STORAGE = 'camstudio-usb-session-v2';
+const videoPreview = $('#sourcePreview'), relayCanvas = $('#relayCanvas'), dialog = $('#pairingDialog');
+const outputResolution = $('#outputResolution'), outputFps = $('#outputFps');
+const videoDevice = $('#videoDevice'), audioDevice = $('#audioDevice');
+let isUsbMode = runtime.selectedTransport(location.search, localStore.getItem('camstudio-transport-v1')) === 'usb';
+let account, activeStream, liveKitRoom, canvasStream, session;
+let previewTimer, statusTimer, expiryTimer, snackbarTimer;
+let generation = 0, opening = false, closing = false, publishTask, relayRunning = false;
+let sourceFrameRate = 30;
+const actualFps = () => Math.min(Number(outputFps.value) || 30, sourceFrameRate || 30);
 
-function updateTransportUi() {
-  document.querySelector('#transportHint').textContent = isUsbMode
-    ? 'USB trực tiếp đang chọn. Chạy start_usb_mode.sh rồi bật camera/OBS; CamPOC sẽ tự nhận phiên qua cáp, không qua Render.'
-    : 'Camera / OBS từ xa phát qua Cloud Render / LiveKit.';
-  document.querySelector('#pairingTransportNote').textContent = isUsbMode
-    ? 'USB: CamPOC tự kết nối qua cáp, không cần QR. QR vẫn dùng được như phương án dự phòng. Luồng này hiện chỉ truyền hình.'
-    : 'Cloud: phát camera và micro qua Render / LiveKit.';
-  const audioLabel = document.querySelector('#audioDevice')?.closest('label');
-  if (audioLabel) audioLabel.hidden = isUsbMode;
+function showSnackbar(text) {
+  clearTimeout(snackbarTimer); $('#snackbarText').textContent = text; $('#snackbar').hidden = false;
+  snackbarTimer = setTimeout(() => { $('#snackbar').hidden = true; }, 4500);
 }
-updateTransportUi();
-
-function showSnackbar(message) {
-  window.clearTimeout(snackbarTimer);
-  snackbarText.textContent = message;
-  snackbar.hidden = false;
-  snackbarTimer = window.setTimeout(() => { snackbar.hidden = true; }, 3800);
-}
-
-function setTheme(theme) {
-  root.dataset.theme = theme;
-  themeMeta.content = theme === 'dark' ? '#111116' : '#f8f7fc';
-  localStore.setItem('camvirtual-theme', theme);
-}
-
-const storedTheme = localStore.getItem('camvirtual-theme');
-const preferredTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-setTheme(storedTheme || preferredTheme);
-
-themeToggle.addEventListener('click', () => {
-  const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
-  setTheme(next);
-  showSnackbar(next === 'dark' ? 'Đã bật giao diện tối' : 'Đã bật giao diện sáng');
-});
-
-document.querySelectorAll('.segmented-control button').forEach((button) => {
-  button.addEventListener('click', () => {
-    document.querySelectorAll('.segmented-control button').forEach((item) => item.classList.remove('selected'));
-    button.classList.add('selected');
-    rotateRange.value = button.dataset.mode === 'left' ? -90 : button.dataset.mode === 'right' ? 90 : 0;
-    rotateValue.value = `${rotateRange.value}°`;
-    updatePreviewResolution();
-    drawRelayFrame();
-  });
-});
-
-const zoomRange = document.querySelector('#zoomRange');
-const rotateRange = document.querySelector('#rotateRange');
-const zoomValue = document.querySelector('#zoomValue');
-const rotateValue = document.querySelector('#rotateValue');
-zoomRange.min = 100;
-zoomRange.addEventListener('input', () => {
-  zoomValue.value = `${zoomRange.value}%`;
-  drawRelayFrame();
-});
-rotateRange.addEventListener('input', () => {
-  rotateValue.value = `${rotateRange.value}°`;
-  document.querySelectorAll('.segmented-control button').forEach((item) => {
-    item.classList.toggle('selected', Number(rotateRange.value) === ({ center: 0, left: -90, right: 90 })[item.dataset.mode]);
-  });
-  updatePreviewResolution();
-  drawRelayFrame();
-});
-
-document.querySelector('#resetFrame').addEventListener('click', () => {
-  zoomRange.value = 100;
-  rotateRange.value = 0;
-  zoomValue.value = '100%';
-  rotateValue.value = '0°';
-  document.querySelectorAll('.segmented-control button').forEach((item) => item.classList.toggle('selected', item.dataset.mode === 'center'));
-  updatePreviewResolution();
-  drawRelayFrame();
-  showSnackbar('Đã đặt lại khung hình');
-});
-
-document.querySelectorAll('.source-row').forEach((row) => {
-  row.addEventListener('click', () => {
-    if (row.querySelector('.tag')) {
-      showSnackbar(`${row.dataset.source} sẽ được triển khai ở goal sau`);
-      return;
-    }
-    const nextUsbMode = row.id === 'nearSource';
-    if (nextUsbMode !== isUsbMode) {
-      sourceGeneration += 1;
-      if (readPairingSession()) void revokePairing('Đã đổi đường truyền', false);
-      relayRunning = false;
-      relayGeneration += 1;
-      stopCanvasPump();
-      stopPreviewPump();
-      studioRuntime.stopStream(activeStream);
-      activeStream = undefined;
-      const previousRoom = liveKitRoom;
-      liveKitRoom = undefined;
-      if (previousRoom) void previousRoom.disconnect().catch(() => {});
-      relayInfo = undefined;
-      isUsbMode = nextUsbMode;
-      updateTransportUi();
-      document.querySelector('#sourcePreview').hidden = true;
-      document.querySelector('#relayCanvas').hidden = true;
-      sourceFrameWidth = 0;
-      sourceFrameHeight = 0;
-      document.querySelector('#previewResolution').textContent = 'Chưa có nguồn';
-      document.querySelector('.preview-empty').hidden = false;
-      document.querySelector('#relayStatus').textContent = 'Chưa phát dữ liệu.';
-    }
-    document.querySelectorAll('.source-row').forEach((item) => {
-      item.classList.remove('selected');
-      item.setAttribute('aria-checked', 'false');
-    });
-    row.classList.add('selected');
-    row.setAttribute('aria-checked', 'true');
-    document.querySelector('#desktopSourceControls').hidden = row.id !== 'computerSource' && row.id !== 'nearSource';
-    const url = new URL(window.location.href);
-    if (row.id === 'computerSource' || row.id === 'nearSource') {
-      const transport = nextUsbMode ? 'usb' : 'cloud';
-      localStore.setItem(TRANSPORT_STORAGE_KEY, transport);
-      url.searchParams.set('transport', transport);
-    } else {
-      localStore.removeItem(TRANSPORT_STORAGE_KEY);
-      url.searchParams.delete('transport');
-    }
-    window.history.replaceState(null, '', url);
-    showSnackbar(`Đã chọn ${row.dataset.source}`);
-  });
-});
-
-if ([requestedTransport, savedTransport].some((value) => value === 'usb' || value === 'cloud')) {
-  document.querySelector(isUsbMode ? '#nearSource' : '#computerSource').click();
-}
-
-const sheet = document.querySelector('#componentSheet');
-const pairingSheet = document.querySelector('#pairingSheet');
-const backdrop = document.querySelector('#sheetBackdrop');
-const closeSheet = document.querySelector('#closeSheet');
-const closePairing = document.querySelector('#closePairing');
-
-function setSheet(activeSheet) {
-  const open = Boolean(activeSheet);
-  sheet.hidden = activeSheet !== sheet;
-  pairingSheet.hidden = activeSheet !== pairingSheet;
-  backdrop.hidden = !open;
-  document.body.style.overflow = open ? 'hidden' : '';
-  if (activeSheet === sheet) closeSheet.focus();
-  if (activeSheet === pairingSheet) closePairing.focus();
-}
-
-document.querySelectorAll('.catalog-trigger').forEach((button) => button.addEventListener('click', () => setSheet(sheet)));
-closeSheet.addEventListener('click', () => setSheet(null));
-closePairing.addEventListener('click', () => setSheet(null));
-backdrop.addEventListener('click', () => setSheet(null));
-document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && (!sheet.hidden || !pairingSheet.hidden)) setSheet(null); });
-document.querySelector('#snackbarAction').addEventListener('click', () => { snackbar.hidden = true; });
-
-const PAIRING_STORAGE_KEY = 'camvirtual-pairing-session-v1';
-const pairingStorageKey = () => isUsbMode ? `${PAIRING_STORAGE_KEY}-usb` : PAIRING_STORAGE_KEY;
-const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const SESSION_LIFETIME_MS = 60 * 60 * 1000;
-const REQUEST_TIMEOUT_MS = 2500;
-const outputResolution = document.querySelector('#outputResolution');
-const outputFps = document.querySelector('#outputFps');
-const previewResolution = document.querySelector('#previewResolution');
-const previewStage = document.querySelector('#previewStage');
-const effectiveOutputFps = () => Math.min(Number(outputFps.value) || 30, sourceFrameRate || Infinity);
-const publishIntervalMs = () => 1000 / effectiveOutputFps();
-[outputResolution, outputFps].forEach((control) => control.addEventListener('change', () => {
-  if (control === outputResolution) {
-    previewStage.classList.toggle('landscape', outputResolution.value.startsWith('landscape-'));
-    previewStage.style.aspectRatio = '';
-  }
-  if (hasLiveSource()) showSnackbar('Bấm “Đổi / khởi động lại nguồn” để áp dụng chất lượng mới');
-}));
-
-async function fetchWithTimeout(input, init = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+async function request(url, init = {}, timeout = 12000) {
+  const control = new AbortController(), timer = setTimeout(() => control.abort(), timeout);
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
-  } finally {
-    window.clearTimeout(timeout);
-  }
-}
-
-async function getRelayInfo() {
-  if (relayInfo) return relayInfo;
-  try {
-    // The first nearby request may pause for Chrome's Local Network Access permission prompt.
-    const response = await fetchWithTimeout(apiUrl('/api/info'), { cache: 'no-store' }, isUsbMode ? 30000 : 1200);
-    if (!response.ok) throw new Error('relay_unavailable');
-    relayInfo = await response.json();
-    if (isUsbMode && relayInfo.transport !== 'lan-jpeg-v1') throw new Error('usb_relay_unavailable');
-  } catch (_) {
-    if (isUsbMode) throw new Error('usb_relay_unavailable');
-    relayInfo = { transport: 'livekit-v2' };
-  }
-  return relayInfo;
-}
-
-function showAccount() {
-  document.querySelector('#accountPanel').hidden = false;
-  document.querySelector('#googleLogin').setAttribute('href', `/api/auth?route=login&transport=${isUsbMode ? 'usb' : 'cloud'}`);
-}
-
-async function loadAccount() {
-  const status = document.querySelector('#accountStatus');
-  try {
-    const response = await fetchWithTimeout('/api/auth?route=me', { credentials: 'same-origin', cache: 'no-store' }, 10000);
-    if (!response.ok) throw new Error('account_unavailable');
-    const result = await response.json();
-    account = result.user || null;
-    status.textContent = account ? `Đã đăng nhập: ${account.email}` : result.configured
-      ? 'Đăng nhập Google để tạo và mở lại mã QR Cloud của bạn.'
-      : 'Máy chủ chưa cấu hình đăng nhập Google và database. USB vẫn dùng bình thường.';
-    document.querySelector('#googleLogin').hidden = !result.configured || Boolean(account);
-    document.querySelector('#accountLogout').hidden = !account;
-    document.querySelector('#accountButton').textContent = account ? account.display_name.slice(0, 1).toUpperCase() : 'G';
-    document.querySelector('#accountButton').setAttribute('aria-label', account ? `Tài khoản ${account.email}` : 'Đăng nhập tài khoản Google');
-    return account;
-  } catch {
-    account = null;
-    status.textContent = 'Chưa kiểm tra được tài khoản. Đóng rồi mở lại bảng tài khoản để thử lại.';
-    document.querySelector('#googleLogin').hidden = true;
-    document.querySelector('#accountLogout').hidden = true;
-    return null;
-  }
-}
-
-async function requireAccount() {
-  await accountReady;
-  if (account) return;
-  showAccount();
-  throw new Error('login_required');
-}
-
-async function createRemoteSession(forceNew = false, existingOnly = false) {
-  await requireAccount();
-  const accountId = account.id;
-  let response = await fetchWithTimeout('/api/session', { method: forceNew ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store' }, 10000);
-  if (response.status === 404 && !forceNew) {
-    await studioRuntime.discardResponse(response);
-    if (existingOnly) return null;
-    if (account?.id !== accountId) throw new Error('account_changed');
-    response = await fetchWithTimeout('/api/session', { method: 'POST', credentials: 'same-origin' }, 10000);
-  }
-  if (response.status === 401) {
-    accountReady = loadAccount();
-    await accountReady;
-    showAccount();
-    throw new Error('login_required');
-  }
-  if (!response.ok) throw new Error('remote_session_failed');
-  const remote = await response.json();
-  if (account?.id !== accountId || remote.ownerId !== accountId) throw new Error('account_changed');
-  cloudPairing = {
-    version: remote.version,
-    transport: remote.transport,
-    room: remote.room,
-    token: remote.receiverToken,
-    publisherToken: remote.publisherToken,
-    expiresAt: remote.expires * 1000,
-    pairExpiresAt: remote.expires * 1000,
-    pairCode: 'QR / LINK',
-    origin: remote.livekitUrl,
-  };
-  return cloudPairing;
-}
-
-document.querySelector('#accountButton').addEventListener('click', () => { showAccount(); accountReady = loadAccount(); });
-document.querySelector('#closeAccount').addEventListener('click', () => { document.querySelector('#accountPanel').hidden = true; });
-document.querySelector('#accountLogout').addEventListener('click', async () => {
-  try {
-    const response = await fetchWithTimeout('/api/auth?route=logout', { method: 'POST', credentials: 'same-origin' });
-    if (!response.ok) throw new Error('logout_failed');
-    if (!isUsbMode) {
-      await revokePairing('Đã đăng xuất', false);
-      sourceGeneration += 1;
-      stopPreviewPump();
-      studioRuntime.stopStream(activeStream);
-      activeStream = undefined;
-      videoPreview.srcObject = null;
-      relayCanvas.hidden = true;
-      document.querySelector('.preview-empty').hidden = false;
+    const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store', ...init, signal: control.signal });
+    if (response.status === 401 && url.startsWith('/api/')) {
+      stopSource(); location.replace(`/login?transport=${isUsbMode ? 'usb' : 'cloud'}`);
+      throw new Error('login_required');
     }
-    cloudPairing = undefined;
-    accountReady = loadAccount();
-    await accountReady;
-  } catch { showSnackbar('Chưa đăng xuất được. Hãy thử lại.'); }
-});
-
-function randomString(length, alphabet) {
-  const bytes = crypto.getRandomValues(new Uint8Array(length));
-  return Array.from(bytes, (value) => alphabet[value % alphabet.length]).join('');
+    return response;
+  } finally { clearTimeout(timer); }
 }
-
-function randomToken() {
-  const bytes = crypto.getRandomValues(new Uint8Array(24));
-  const binary = Array.from(bytes, (value) => String.fromCharCode(value)).join('');
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-}
-
-async function registerPairingSession(session) {
-  if (session.transport === 'livekit') {
-    activeRelaySession = session;
-    return session;
+async function jsonRequest(url, method, data) {
+  const response = await request(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  if (!response.ok) {
+    if (response.status === 409) throw new Error('room_busy');
+    if (response.status === 429) throw new Error('too_many_attempts');
+    throw new Error('server_unavailable');
   }
-  const response = await fetchWithTimeout(apiUrl('/api/sessions'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      room: session.room,
-      token: session.token,
-      expires: Math.floor(session.expiresAt / 1000),
-    }),
-  });
-  if (!response.ok) throw new Error('session_registration_failed');
-  const registered = await response.json();
-  session.origin = isUsbMode ? USB_ORIGIN : registered.receiverOrigin;
-  session.pairCode = registered.pairCode;
-  session.pairExpiresAt = registered.pairExpires * 1000;
-  activeRelaySession = session;
-  localStore.setItem(pairingStorageKey(), JSON.stringify(session));
-  return session;
+  return response.json();
 }
-
-async function makePairingSession() {
-  const info = await getRelayInfo();
-  if (info.transport === 'livekit-v2') return createRemoteSession();
-  const session = {
-    version: 1,
-    room: randomString(6, ROOM_ALPHABET),
-    token: randomToken(),
-    expiresAt: Date.now() + SESSION_LIFETIME_MS,
-    origin: isUsbMode ? USB_ORIGIN : info.receiverOrigin,
-  };
-  return registerPairingSession(session);
+function updateTransport() {
+  $('#computerSource').classList.toggle('selected', !isUsbMode); $('#nearSource').classList.toggle('selected', isUsbMode);
+  $('#computerSource').setAttribute('aria-pressed', String(!isUsbMode)); $('#nearSource').setAttribute('aria-pressed', String(isUsbMode));
+  $('#audioField').hidden = isUsbMode;
+  $('#transportHint').textContent = isUsbMode ? 'USB trực tiếp. Mở dịch vụ USB trên máy tính và cắm điện thoại.' : 'Cloud phát hình và tiếng qua LiveKit.';
+  $('#passwordCard').hidden = isUsbMode;
+  localStore.setItem('camstudio-transport-v1', isUsbMode ? 'usb' : 'cloud');
+  const url = new URL(location.href); url.searchParams.set('transport', isUsbMode ? 'usb' : 'cloud'); history.replaceState(null, '', url);
 }
-
-function pairingUri(session) {
-  const query = new URLSearchParams({
-    v: String(session.version),
-    room: session.room,
-    token: session.token,
-    expires: String(Math.floor(session.expiresAt / 1000)),
-    origin: session.origin,
-  });
-  if (session.transport === 'livekit') query.set('transport', 'livekit');
-  return `camvirtual://pair?${query.toString()}`;
+function busy(value) {
+  $('#pairButton').disabled = value; $('#newPairing').disabled = value; $('#restartSource').disabled = value;
+  $('#computerSource').disabled = value; $('#nearSource').disabled = value;
+  for (const selector of ['#copyCode', '#copyPassword', '#copyPairing']) $(selector).disabled = value;
+  $('#qrCode').setAttribute('aria-busy', String(value));
 }
-
-function readPairingSession() {
-  if (!isUsbMode) return account && cloudPairing?.expiresAt > Date.now() ? cloudPairing : null;
-  try {
-    const session = JSON.parse(localStore.getItem(pairingStorageKey()));
-    if ((session?.version === 1 || session?.version === 2) && session.expiresAt > Date.now()) return session;
-  } catch (_) {
-    // Corrupt local state is treated as revoked.
-  }
-  localStore.removeItem(pairingStorageKey());
-  return null;
-}
-
-function renderPairing(session) {
-  const uri = pairingUri(session);
-  const qr = qrcode(0, 'M');
-  qr.addData(uri, 'Byte');
-  qr.make();
-  document.querySelector('#qrCode').innerHTML = qr.createSvgTag({ cellSize: 5, margin: 0, scalable: true });
-  document.querySelector('#pairingCode').textContent = isUsbMode ? 'Quét QR' : session.pairCode;
-  document.querySelector('#pairingLink').value = uri;
-  const badge = document.querySelector('#sessionBadge');
-  badge.classList.add('success');
-  badge.innerHTML = `<span></span>Phiên ${session.room}`;
-  document.querySelector('#pairButton').textContent = 'Xem mã ghép nối';
-  window.clearInterval(expiryTimer);
-  const tick = () => {
-    const remaining = Math.max(0, session.pairExpiresAt - Date.now());
-    const minutes = Math.floor(remaining / 60000);
-    const seconds = Math.floor((remaining % 60000) / 1000);
-    document.querySelector('#pairingExpiry').textContent = `${minutes}:${String(seconds).padStart(2, '0')}`;
-    if (remaining === 0) {
-      window.clearInterval(expiryTimer);
-      document.querySelector('#pairingExpiry').textContent = 'Hết hạn';
-      showSnackbar('Mã nhập đã hết hạn; tạo mã mới để ghép thiết bị khác');
-    }
-  };
-  tick();
-  expiryTimer = window.setInterval(tick, 1000);
-}
-
-function setPairingLiveState(message, live = false) {
-  const state = document.querySelector('#pairingLiveState');
-  state.textContent = message;
-  state.classList.toggle('live', live);
-}
-
-function hasLiveSource() {
-  return Boolean(activeStream?.getVideoTracks().some((track) => track.readyState === 'live'));
-}
-
-function publishCurrentSource(session) {
-  if (!hasLiveSource()) {
-    setPairingLiveState(isUsbMode
-      ? 'Phiên USB sẵn sàng · bấm “Bật camera / OBS” để điện thoại tự nhận'
-      : 'Đã có QR · bấm “Bật camera / OBS” trước khi mở camera trên điện thoại');
-    return;
-  }
-  const generation = ++relayGeneration;
+function hasSource() { return activeStream?.getVideoTracks().some((track) => track.readyState === 'live'); }
+function stopPublishing() {
   relayRunning = false;
-  stopCanvasPump();
-  setPairingLiveState(isUsbMode ? 'Đang nối camera qua USB…' : 'Đang nối camera/mic với phòng mới…');
-  void publishFrames(session, generation);
+  clearInterval(statusTimer); statusTimer = undefined;
+  runtime.stopStream(canvasStream); canvasStream = undefined;
+  const room = liveKitRoom; liveKitRoom = undefined;
+  if (room) void room.disconnect().catch(() => {});
 }
-
-async function ensurePairingSession(forceNew = false) {
-  if (!isUsbMode) return registerPairingSession(await createRemoteSession(forceNew));
-  if (forceNew) {
-    const previous = readPairingSession();
-    if (previous && previous.transport !== 'livekit') {
-      await fetch(apiUrl(`/api/rooms/${previous.room}?token=${encodeURIComponent(previous.token)}`), {
-        method: 'DELETE',
-      }).catch(() => {});
-    }
-    if (liveKitRoom) {
-      await liveKitRoom.disconnect();
-      liveKitRoom = undefined;
-    }
-    return makePairingSession();
-  }
-  const existing = readPairingSession();
-  if (existing) {
-    if (existing.transport === 'livekit') return registerPairingSession(existing);
-    const info = await getRelayInfo();
-    existing.origin = isUsbMode ? USB_ORIGIN : info.receiverOrigin;
-    return registerPairingSession(existing);
-  }
-  return makePairingSession();
+function stopSource() {
+  generation++;
+  stopPublishing();
+  clearInterval(previewTimer); previewTimer = undefined;
+  runtime.stopStream(activeStream); activeStream = undefined;
+  videoPreview.srcObject = null; relayCanvas.hidden = true;
+  $('.preview-empty').hidden = false; $('#restartSource').hidden = true;
+  $('#previewResolution').textContent = 'Chưa có nguồn'; $('#relayStatus').textContent = 'Chưa phát dữ liệu';
 }
-
-async function openPairing(forceNew = false) {
-  try {
-    const session = await ensurePairingSession(forceNew);
-    renderPairing(session);
-    setSheet(pairingSheet);
-    if (forceNew) publishCurrentSource(session);
-    else if (relayRunning && hasLiveSource()) setPairingLiveState(isUsbMode ? 'Camera đang phát qua USB' : 'Camera + mic đang phát tới điện thoại', true);
-    else setPairingLiveState(isUsbMode ? 'Phiên USB sẵn sàng · chưa phát camera' : 'Đã có QR · chưa phát camera/mic');
-  } catch (error) {
-    const message = error.message === 'login_required'
-      ? 'Đăng nhập Google để dùng nguồn Cloud.'
-        : isUsbMode ? 'Không nối được USB. Hãy cho phép Chrome truy cập mạng cục bộ, rồi kiểm tra server.py và adb reverse.' : 'Không tạo được phiên remote. Kiểm tra cấu hình LiveKit trên máy chủ.';
-    showSnackbar(message);
-  }
-}
-
-async function revokePairing(message = 'Đã thu hồi phiên ghép nối', remote = true) {
-  const session = readPairingSession();
-  if (remote && !isUsbMode) {
-    try {
-      const response = await fetchWithTimeout('/api/session', { method: 'DELETE', credentials: 'same-origin' }, 10000);
-      if (!response.ok) throw new Error('revoke_failed');
-    } catch { showSnackbar('Chưa thu hồi được phiên Cloud. Hãy thử lại.'); return; }
-  }
-  if (session && session.transport !== 'livekit') {
-    fetch(apiUrl(`/api/rooms/${session.room}?token=${encodeURIComponent(session.token)}`), {
-      method: 'DELETE',
-    }).catch(() => {});
-  }
-  relayRunning = false;
-  relayGeneration += 1;
-  stopCanvasPump();
-  if (liveKitRoom) {
-    void liveKitRoom.disconnect();
-    liveKitRoom = undefined;
-  }
-  activeRelaySession = undefined;
-  if (!isUsbMode) cloudPairing = undefined;
-  localStore.removeItem(pairingStorageKey());
-  window.clearInterval(expiryTimer);
-  const badge = document.querySelector('#sessionBadge');
-  badge.classList.remove('success');
-  badge.innerHTML = '<span></span>Chưa ghép nối';
-  document.querySelector('#pairButton').textContent = 'Tạo mã ghép nối';
-  setSheet(null);
-  showSnackbar(message);
-}
-
-document.querySelector('#pairButton').addEventListener('click', () => { void openPairing(false); });
-document.querySelector('#newPairing').addEventListener('click', async () => {
-  await openPairing(true);
-  showSnackbar('Đã tạo mã mới; mã cũ không còn dùng trên web này');
-});
-document.querySelector('#startPairingSource').addEventListener('click', () => { void startDesktopSource(true); });
-document.querySelector('#revokePairing').addEventListener('click', () => revokePairing());
-document.querySelector('#copyPairing').addEventListener('click', async () => {
-  const session = readPairingSession();
-  if (!session) {
-    revokePairing('Phiên đã hết hạn');
-    return;
-  }
-  try {
-    await navigator.clipboard.writeText(pairingUri(session));
-    showSnackbar('Đã sao chép link ghép nối');
-  } catch (_) {
-    showSnackbar('Không thể sao chép; hãy quét QR');
-  }
-});
-
-const videoPreview = document.querySelector('#sourcePreview');
-const relayCanvas = document.querySelector('#relayCanvas');
-const relayStatus = document.querySelector('#relayStatus');
-const videoDevice = document.querySelector('#videoDevice');
-const audioDevice = document.querySelector('#audioDevice');
-const startRelay = document.querySelector('#startRelay');
-const cameraFormatHelp = document.querySelector('#cameraFormatHelp');
-
-function updateCameraFormatHelp() {
-  if (!cameraFormatHelp) return;
-  const selectedLabel = videoDevice.selectedOptions[0]?.textContent || '';
-  cameraFormatHelp.hidden = !/OBS Virtual Camera/i.test(selectedLabel);
-  cameraFormatHelp.textContent = 'Cắt giữa sẽ bỏ hai rìa của nguồn ngang. Muốn giữ đủ 1920×1080 pixel, hãy xoay hình trong OBS 90° cho nằm ngang, rồi chọn Xoay trái/phải tại preview để dựng lại thành 1080×1920.';
-}
-
-videoDevice.addEventListener('change', updateCameraFormatHelp);
-
-async function populateDevices(selectedVideoId = '', selectedAudioId = '') {
-  const devices = await navigator.mediaDevices.enumerateDevices();
-  const cameras = devices.filter((device) => device.kind === 'videoinput');
-  const microphones = devices.filter((device) => device.kind === 'audioinput');
-  videoDevice.replaceChildren(
-    new Option('Tự động chọn camera', ''),
-  );
-  cameras.forEach((camera, index) => {
-    videoDevice.add(new Option(camera.label || `Camera ${index + 1}`, camera.deviceId));
-  });
-  videoDevice.value = selectedVideoId;
-  updateCameraFormatHelp();
-  audioDevice.replaceChildren(new Option('Tự động chọn', ''));
-  microphones.forEach((microphone, index) => {
-    audioDevice.add(new Option(microphone.label || `Microphone ${index + 1}`, microphone.deviceId));
-  });
-  audioDevice.value = selectedAudioId;
-}
-
 function drawRelayFrame() {
   if (!videoPreview.videoWidth || !videoPreview.videoHeight) return;
   const context = relayCanvas.getContext('2d', { alpha: false });
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = 'high';
-  const width = relayCanvas.width;
-  const height = relayCanvas.height;
-  const sourceWidth = videoPreview.videoWidth;
-  const sourceHeight = videoPreview.videoHeight;
-  const radians = Number(rotateRange.value) * Math.PI / 180;
-  const cosine = Math.abs(Math.cos(radians));
-  const sine = Math.abs(Math.sin(radians));
-  const coverScale = Math.max(
-    (width * cosine + height * sine) / sourceWidth,
-    (width * sine + height * cosine) / sourceHeight,
-  );
-  const scale = coverScale * Math.max(1, Number(zoomRange.value) / 100) * 1.001;
-  context.setTransform(1, 0, 0, 1, 0, 0);
-  context.clearRect(0, 0, width, height);
-  context.translate(width / 2, height / 2);
-  context.rotate(radians);
-  context.scale(scale, scale);
-  context.drawImage(videoPreview, -sourceWidth / 2, -sourceHeight / 2);
-  context.setTransform(1, 0, 0, 1, 0, 0);
+  const scale = Math.max(relayCanvas.width / videoPreview.videoWidth, relayCanvas.height / videoPreview.videoHeight) * 1.001;
+  context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high';
+  context.setTransform(1, 0, 0, 1, 0, 0); context.clearRect(0, 0, relayCanvas.width, relayCanvas.height);
+  context.drawImage(videoPreview, (relayCanvas.width - videoPreview.videoWidth * scale) / 2,
+    (relayCanvas.height - videoPreview.videoHeight * scale) / 2, videoPreview.videoWidth * scale, videoPreview.videoHeight * scale);
 }
-
-function stopPreviewPump() {
-  if (previewFrameTimer) window.clearInterval(previewFrameTimer);
-  previewFrameTimer = undefined;
-}
-
-function startPreviewPump() {
-  stopPreviewPump();
-  drawRelayFrame();
-  previewFrameTimer = window.setInterval(drawRelayFrame, publishIntervalMs());
-}
-
-function frameBlob() {
-  return new Promise((resolve) => relayCanvas.toBlob(resolve, 'image/jpeg', 0.96));
-}
-
-function stopCanvasPump() {
-  canvasCaptureStream?.getTracks().forEach((track) => track.stop());
-  canvasCaptureStream = undefined;
-}
-
-function startCanvasPump() {
-  stopCanvasPump();
-  drawRelayFrame();
-}
-
-function configureRelayCanvas(track) {
-  const settings = track.getSettings();
-  const sourceWidth = videoPreview.videoWidth || settings.width;
-  const sourceHeight = videoPreview.videoHeight || settings.height;
-  if (!sourceWidth || !sourceHeight) throw new Error('source_resolution_unavailable');
-  const profile = outputResolution.value;
-  sourceFrameWidth = sourceWidth;
-  sourceFrameHeight = sourceHeight;
-  sourceFrameRate = Number(settings.frameRate) || 0;
-  if (profile.startsWith('portrait-')) {
-    const shortEdge = profile === 'portrait-1440' ? 1440 : 1080;
-    relayCanvas.width = shortEdge;
-    relayCanvas.height = Math.round(shortEdge * 16 / 9);
-  } else {
-    const maxShortEdge = profile === 'source' ? Infinity : Number(profile.split('-')[1]);
-    const scale = Math.min(1, maxShortEdge / Math.min(sourceWidth, sourceHeight));
-    relayCanvas.width = Math.max(2, Math.round(sourceWidth * scale / 2) * 2);
-    relayCanvas.height = Math.max(2, Math.round(sourceHeight * scale / 2) * 2);
+function configureCanvas(track) {
+  const settings = track.getSettings(), width = videoPreview.videoWidth || settings.width, height = videoPreview.videoHeight || settings.height;
+  if (!width || !height) throw new Error('source_resolution_unavailable');
+  sourceFrameRate = Number(settings.frameRate) || 30;
+  if (outputResolution.value.startsWith('portrait-')) { relayCanvas.width = 1080; relayCanvas.height = 1920; }
+  else {
+    const scale = outputResolution.value === 'source' ? 1 : Math.min(1, 1080 / Math.min(width, height));
+    relayCanvas.width = Math.max(2, Math.round(width * scale / 2) * 2); relayCanvas.height = Math.max(2, Math.round(height * scale / 2) * 2);
   }
-  previewStage.classList.toggle('landscape', relayCanvas.width >= relayCanvas.height);
-  previewStage.style.aspectRatio = `${relayCanvas.width} / ${relayCanvas.height}`;
-  updatePreviewResolution(settings.frameRate);
+  $('#previewStage').classList.toggle('landscape', relayCanvas.width >= relayCanvas.height);
+  $('#previewStage').style.aspectRatio = `${relayCanvas.width} / ${relayCanvas.height}`;
+  $('#previewResolution').textContent = `${width}×${height} → ${relayCanvas.width}×${relayCanvas.height}`;
+  drawRelayFrame(); clearInterval(previewTimer); previewTimer = setInterval(drawRelayFrame, 1000 / actualFps());
 }
-
-function updatePreviewResolution(frameRate) {
-  if (!sourceFrameWidth || !sourceFrameHeight) return;
-  if (frameRate) sourceFrameRate = frameRate;
-  const rotation = Number(rotateRange.value);
-  const sourceLandscape = sourceFrameWidth > sourceFrameHeight;
-  const outputPortrait = relayCanvas.height > relayCanvas.width;
-  const croppedWidth = Math.round(sourceFrameHeight * relayCanvas.width / relayCanvas.height);
-  const detail = outputPortrait && sourceLandscape
-    ? Math.abs(rotation) === 90
-      ? ' · xoay 90°; dùng toàn khung nguồn'
-      : rotation === 0
-        ? ` · cắt giữa ≈${croppedWidth}×${sourceFrameHeight} pixel nguồn`
-        : ' · xoay và cắt để lấp đầy khung dọc'
-    : '';
-  const requestedFps = Number(outputFps.value) || 30;
-  const sourceFps = sourceFrameRate ? `${Math.round(sourceFrameRate)} fps` : 'chưa xác định';
-  previewResolution.textContent = `${sourceFrameWidth}×${sourceFrameHeight} → ${relayCanvas.width}×${relayCanvas.height} · nguồn ${sourceFps} · yêu cầu ${requestedFps} fps${detail}`;
+async function populateDevices(videoId = '', audioId = '') {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  videoDevice.replaceChildren(new Option('Tự động chọn camera', ''));
+  audioDevice.replaceChildren(new Option('Tự động chọn micro', ''));
+  devices.filter((device) => device.kind === 'videoinput').forEach((device, index) => videoDevice.add(new Option(device.label || `Camera ${index + 1}`, device.deviceId)));
+  devices.filter((device) => device.kind === 'audioinput').forEach((device, index) => audioDevice.add(new Option(device.label || `Micro ${index + 1}`, device.deviceId)));
+  videoDevice.value = videoId; audioDevice.value = audioId;
 }
-
-function desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, sizeMode) {
-  const profile = outputResolution.value;
-  const portrait = profile.startsWith('portrait-');
-  const shortEdge = profile === 'portrait-source' ? 1080
-    : profile === 'source' ? 0 : Number(profile.split('-')[1]);
-  const targetWidth = portrait ? shortEdge : Math.round(shortEdge * 16 / 9);
-  const targetHeight = portrait ? Math.round(shortEdge * 16 / 9) : shortEdge;
-  let dimensions = {};
-  if (profile !== 'source' && sizeMode !== 'none') {
-    dimensions = sizeMode === 'exact'
-      ? { width: { exact: targetWidth }, height: { exact: targetHeight } }
-      : { width: { ideal: targetWidth }, height: { ideal: targetHeight } };
+async function ensureSource(run) {
+  if (hasSource()) return;
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error('media_unsupported');
+  const videoId = videoDevice.value, audioId = audioDevice.value;
+  const portrait = outputResolution.value.startsWith('portrait-');
+  const constraints = (mode) => ({ video: {
+    ...(mode === 'none' ? {} : { width: { [mode]: portrait ? 1080 : 1920 }, height: { [mode]: portrait ? 1920 : 1080 } }),
+    ...(videoId ? { deviceId: { exact: videoId } } : {}), frameRate: { ideal: Number(outputFps.value) },
+    resizeMode: portrait && mode === 'exact' ? { exact: 'none' } : { ideal: 'none' },
+  }, audio: isUsbMode ? false : audioId ? { deviceId: { exact: audioId } } : true });
+  let next;
+  try { next = await navigator.mediaDevices.getUserMedia(constraints(outputResolution.value === 'source' ? 'none' : 'exact')); }
+  catch (error) {
+    if (outputResolution.value === 'source' || !['OverconstrainedError', 'NotFoundError'].includes(error.name)) throw error;
+    next = await navigator.mediaDevices.getUserMedia(constraints(portrait ? 'none' : 'ideal'));
   }
-  return {
-    video: {
-      ...(videoDeviceId ? { deviceId: { exact: videoDeviceId } } : {}),
-      ...dimensions,
-      frameRate: { ideal: desiredFps },
-      resizeMode: portrait && sizeMode === 'exact' ? { exact: 'none' } : { ideal: 'none' },
-    },
-    audio: isUsbMode ? false : audioDeviceId ? { deviceId: { exact: audioDeviceId } } : true,
+  if (run !== generation) { runtime.stopStream(next); throw new Error('cancelled'); }
+  activeStream = next;
+  next.getTracks().forEach((track) => track.addEventListener?.('ended', () => {
+    if (activeStream === next) { stopSource(); showSnackbar('Nguồn đã dừng. Tạo mã ghép nối để mở lại.'); }
+  }));
+  videoPreview.srcObject = next; await videoPreview.play();
+  if (run !== generation) { runtime.stopStream(next); throw new Error('cancelled'); }
+  configureCanvas(next.getVideoTracks()[0]); relayCanvas.hidden = false; $('.preview-empty').hidden = true;
+  $('#restartSource').hidden = false;
+  await populateDevices(next.getVideoTracks()[0]?.getSettings().deviceId || videoId, next.getAudioTracks()[0]?.getSettings().deviceId || audioId);
+}
+function invitation(value) {
+  if (value.transport === 'livekit') return `camvirtual://connect?${new URLSearchParams({ code: value.code, password: value.password, origin: location.origin })}`;
+  return `camvirtual://pair?${new URLSearchParams({ v: '1', room: value.room, token: value.token, expires: String(value.expires), origin: USB_ORIGIN })}`;
+}
+function renderPairing(value) {
+  $('#pairingCode').textContent = value.code || value.room;
+  $('#pairingPassword').textContent = value.password || '';
+  $('#passwordCard').hidden = value.transport !== 'livekit';
+  $('#pairingInstructions').textContent = value.transport === 'livekit'
+    ? 'Quét QR bằng CamPOC, hoặc nhập mã phòng và mật khẩu trên điện thoại.'
+    : 'Cắm điện thoại qua USB và chọn nguồn USB trong CamPOC. Có thể quét QR bằng chính điện thoại đang cắm cáp.';
+  const qr = qrcode(0, 'M'); qr.addData(invitation(value), 'Byte'); qr.make();
+  $('#qrCode').innerHTML = qr.createSvgTag({ cellSize: 5, margin: 0, scalable: true });
+  $('#pairButton').textContent = 'Mở mã ghép nối ↗';
+  $('#sessionBadge').textContent = value.connected ? 'Thiết bị đã kết nối' : `Phòng ${value.code || value.room}`;
+  clearInterval(expiryTimer);
+  const tick = () => {
+    const remaining = Math.max(0, value.expires * 1000 - Date.now());
+    $('#pairingExpiry').textContent = `${Math.floor(remaining / 60000)}:${String(Math.floor(remaining / 1000) % 60).padStart(2, '0')}`;
+    if (!remaining) { clearInterval(expiryTimer); $('#pairingConnection').textContent = 'Mã đã hết hạn. Tạo mã mới để tiếp tục.'; }
   };
+  tick(); expiryTimer = setInterval(tick, 1000);
 }
-
-async function openDesktopStream(videoDeviceId, audioDeviceId, desiredFps) {
-  const profile = outputResolution.value;
-  const sizeMode = profile === 'source' ? 'none' : 'exact';
+function setConnection(connected) {
+  if (!session) return;
+  session.connected = connected || session.connected;
+  $('#pairingConnection').textContent = session.connected ? '● Thiết bị đã kết nối' : '● Nguồn sẵn sàng · chờ điện thoại';
+  $('#sessionBadge').textContent = session.connected ? 'Thiết bị đã kết nối' : `Phòng ${session.code || session.room}`;
+}
+async function pollStatus(value, run) {
   try {
-    return await navigator.mediaDevices.getUserMedia(
-      desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, sizeMode),
-    );
-  } catch (error) {
-    if (sizeMode === 'none' || !['OverconstrainedError', 'NotFoundError'].includes(error.name)) throw error;
-    const fallbackMode = profile.startsWith('portrait-') ? 'none' : 'ideal';
-    return navigator.mediaDevices.getUserMedia(
-      desktopMediaConstraints(videoDeviceId, audioDeviceId, desiredFps, fallbackMode),
-    );
-  }
+    const url = value.transport === 'livekit' ? '/api/session?action=status' : `${USB_ORIGIN}/api/rooms/${value.room}/status?token=${encodeURIComponent(value.token)}`;
+    const response = await request(url);
+    if (!response.ok || run !== generation || session !== value) return;
+    const data = await response.json();
+    if (value.transport === 'livekit' && data.revision !== value.revision) return;
+    setConnection(Boolean(data.connected));
+  } catch { /* Transient presence failure cannot turn a connected room into an unused one. */ }
 }
-
-async function recoverRelay(session) {
-  relayInfo = null;
-  const info = await getRelayInfo();
-  session.origin = isUsbMode ? USB_ORIGIN : info.receiverOrigin;
-  await registerPairingSession(session);
-}
-
-async function publishLiveKit(session, generation) {
-  if (!window.LivekitClient) throw new Error('livekit_client_missing');
-  if (liveKitRoom) await liveKitRoom.disconnect();
-  const room = new window.LivekitClient.Room({
-    adaptiveStream: true,
-    dynacast: true,
-    disconnectOnPageLeave: true,
-  });
+async function publishCloud(value, run) {
+  const credentials = await jsonRequest('/api/session', 'POST', { action: 'publisher', revision: value.revision });
+  if (run !== generation) return;
+  const sdk = window.LivekitClient;
+  const room = new sdk.Room({ adaptiveStream: true, dynacast: true, disconnectOnPageLeave: true });
   liveKitRoom = room;
-  room.on(window.LivekitClient.RoomEvent.Reconnecting, () => {
-    if (generation === relayGeneration) relayStatus.textContent = 'Mạng gián đoạn • đang tự kết nối lại…';
-    if (generation === relayGeneration) setPairingLiveState('Mạng gián đoạn · đang tự kết nối lại…');
-  });
-  room.on(window.LivekitClient.RoomEvent.Reconnected, () => {
-    if (generation === relayGeneration) relayStatus.textContent = 'Đã nối lại • đang phát qua Internet';
-    if (generation === relayGeneration) setPairingLiveState('Camera + mic đang phát tới điện thoại', true);
-  });
-  room.on(window.LivekitClient.RoomEvent.Disconnected, () => {
-    if (generation === relayGeneration) stopCanvasPump();
-    if (relayRunning && generation === relayGeneration) relayStatus.textContent = 'Đã mất kết nối remote.';
-    if (relayRunning && generation === relayGeneration) setPairingLiveState('Đã mất kết nối remote · hãy thử lại');
-  });
-  await room.connect(session.origin, session.publisherToken);
-  if (generation !== relayGeneration) {
-    await room.disconnect();
-    return;
-  }
-  startCanvasPump();
-  canvasCaptureStream = relayCanvas.captureStream(effectiveOutputFps());
-  const videoTrack = canvasCaptureStream.getVideoTracks()[0];
-  const audioTrack = activeStream?.getAudioTracks()[0];
-  if (videoTrack) {
-    await room.localParticipant.publishTrack(videoTrack, {
-      source: window.LivekitClient.Track.Source.Camera,
-      simulcast: true,
-    });
-  }
-  if (audioTrack) {
-    await room.localParticipant.publishTrack(audioTrack, {
-      source: window.LivekitClient.Track.Source.Microphone,
-    });
-  }
-  if (generation !== relayGeneration) return;
-  relayStatus.textContent = `Đang phát qua Internet • phòng ${session.room}`;
-  setPairingLiveState('Camera + mic đang phát tới điện thoại', true);
+  room.on(sdk.RoomEvent.ParticipantConnected, () => { if (run === generation) void pollStatus(value, run); });
+  room.on(sdk.RoomEvent.Reconnecting, () => { if (run === generation) $('#relayStatus').textContent = 'Mạng gián đoạn · đang kết nối lại…'; });
+  room.on(sdk.RoomEvent.Reconnected, () => { if (run === generation) $('#relayStatus').textContent = 'Đang phát qua Cloud'; });
+  room.on(sdk.RoomEvent.Disconnected, () => { if (run === generation) $('#relayStatus').textContent = 'Nguồn Cloud đã ngắt. Bấm khởi động lại nguồn để thử lại.'; });
+  await room.connect(credentials.livekitUrl, credentials.token);
+  if (run !== generation) { await room.disconnect(); return; }
+  canvasStream = relayCanvas.captureStream(actualFps());
+  const video = canvasStream.getVideoTracks()[0], audio = activeStream?.getAudioTracks()[0];
+  if (video) await room.localParticipant.publishTrack(video, { source: sdk.Track.Source.Camera, simulcast: true });
+  if (audio && run === generation) await room.localParticipant.publishTrack(audio, { source: sdk.Track.Source.Microphone });
+  if (run !== generation) { await room.disconnect(); return; }
+  relayRunning = true; $('#relayStatus').textContent = 'Đang phát qua Cloud';
+  setConnection(value.state === 'connected');
+  void pollStatus(value, run); statusTimer = setInterval(() => { void pollStatus(value, run); }, 3000);
 }
-
-async function publishFrames(initialSession, generation) {
-  if (generation !== relayGeneration) return;
-  activeRelaySession = initialSession;
-  relayRunning = true;
-  publishedFrames = 0;
-  if (initialSession.transport === 'livekit') {
+async function publishUsb(value, run) {
+  relayRunning = true; let frames = 0, measuredAt = performance.now(), consecutiveFailures = 0;
+  setConnection(false); statusTimer = setInterval(() => { void pollStatus(value, run); }, 3000);
+  while (relayRunning && run === generation && hasSource()) {
+    const started = performance.now();
     try {
-      await publishLiveKit(initialSession, generation);
-    } catch (_) {
-      if (generation === relayGeneration) stopCanvasPump();
-      if (generation === relayGeneration) relayStatus.textContent = 'Không kết nối được LiveKit • kiểm tra mạng và cấu hình.';
-      if (generation === relayGeneration) setPairingLiveState('Không phát được lên LiveKit · hãy thử lại');
-    }
-    return;
-  }
-  let consecutiveFailures = 0;
-  let measuredAt = performance.now();
-  let measuredFrames = 0;
-  while (
-    relayRunning && generation === relayGeneration && activeStream &&
-    activeStream.getVideoTracks().some((track) => track.readyState === 'live')
-  ) {
-    const session = activeRelaySession;
-    if (!session || session.expiresAt <= Date.now()) {
-      relayStatus.textContent = 'Phiên đã hết hạn; hãy tạo mã ghép nối mới.';
-      break;
-    }
-    const startedAt = performance.now();
-    try {
-      const blob = await frameBlob();
-      if (!relayRunning || generation !== relayGeneration) break;
-      if (!blob) throw new Error('jpeg_failed');
-      const response = await fetchWithTimeout(
-        apiUrl(`/api/rooms/${session.room}/frame?token=${encodeURIComponent(session.token)}`),
-        { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob },
-      );
-      await studioRuntime.discardResponse(response);
-      if (!relayRunning || generation !== relayGeneration) break;
-      if (!response.ok) throw new Error(`publish_${response.status}`);
-      publishedFrames += 1;
-      measuredFrames += 1;
-      consecutiveFailures = 0;
-      const now = performance.now();
-      if (publishedFrames === 1) relayStatus.textContent = `Đang phát qua ${isUsbMode ? 'USB' : 'LAN'} • đang đo FPS…`;
-      if (now - measuredAt >= 1000) {
-        const sentFps = measuredFrames * 1000 / (now - measuredAt);
-        relayStatus.textContent = `Đang phát qua ${isUsbMode ? 'USB' : 'LAN'} • gửi ${sentFps.toFixed(1)} fps • ${publishedFrames} frame`;
-        if (now - measuredAt >= 1000) {
-          measuredAt = now;
-          measuredFrames = 0;
-        }
+      if (Date.now() >= value.expires * 1000) { $('#relayStatus').textContent = 'Phiên USB hết hạn. Tạo mã mới để tiếp tục.'; break; }
+      const blob = await new Promise((resolve) => relayCanvas.toBlob(resolve, 'image/jpeg', .96));
+      if (run !== generation || !blob) break;
+      const response = await request(`${USB_ORIGIN}/api/rooms/${value.room}/frame?token=${encodeURIComponent(value.token)}`, { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
+      await runtime.discardResponse(response);
+      if (!response.ok) throw new Error('usb_publish_failed');
+      consecutiveFailures = 0; frames++;
+      if (performance.now() - measuredAt >= 1000) {
+        $('#relayStatus').textContent = `Đang phát qua USB · ${(frames * 1000 / (performance.now() - measuredAt)).toFixed(1)} fps`;
+        measuredAt = performance.now(); frames = 0;
       }
-    } catch (_) {
-      if (generation !== relayGeneration) break;
-      consecutiveFailures += 1;
-      relayStatus.textContent = `Mất kết nối với relay • đang tự nối lại (${consecutiveFailures})…`;
-      try {
-        await recoverRelay(session);
-      } catch (_) {
-        // The bounded retry below keeps the UI responsive while the relay is offline.
-      }
-    }
-    const elapsed = performance.now() - startedAt;
-    const retryDelay = consecutiveFailures ? 500 : Math.max(0, publishIntervalMs() - elapsed);
-    if (retryDelay > 0) {
-      await new Promise((resolve) => window.setTimeout(resolve, retryDelay));
-    }
+    } catch { consecutiveFailures++; $('#relayStatus').textContent = 'Chưa gửi được qua USB · đang thử lại…'; }
+    await new Promise((resolve) => setTimeout(resolve, consecutiveFailures ? 500 : Math.max(0, 1000 / actualFps() - (performance.now() - started))));
   }
 }
-
-async function startDesktopSource(showPairingAfter = false) {
-  if (sourceStartInFlight) return false;
-  sourceStartInFlight = true;
-  const sourceRun = ++sourceGeneration;
-  const isCurrentSource = () => sourceRun === sourceGeneration;
-  let acquiredStream;
-  startRelay.disabled = true;
-  startRelay.textContent = 'Đang mở nguồn…';
-  try {
-    const selectedVideoId = videoDevice.value;
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error('media_unsupported');
-    }
-    relayRunning = false;
-    relayGeneration += 1;
-    stopCanvasPump();
-    stopPreviewPump();
-    const selectedAudioId = audioDevice.value;
-    const desiredFps = Number(outputFps.value);
-    const previousStream = activeStream;
-    const previousRoom = liveKitRoom;
-    activeStream = undefined;
-    liveKitRoom = undefined;
-    videoPreview.pause();
-    videoPreview.srcObject = null;
-    studioRuntime.record('source-start');
-    const nextStream = await studioRuntime.replaceSource({
-      previous: previousStream,
-      disconnect: () => previousRoom ? previousRoom.disconnect() : Promise.resolve(),
-      acquire: () => openDesktopStream(selectedVideoId, selectedAudioId, desiredFps),
-      isCurrent: isCurrentSource,
-    });
-    if (!nextStream) return false;
-    acquiredStream = nextStream;
-    activeStream = nextStream;
-    await populateDevices(
-      activeStream.getVideoTracks()[0]?.getSettings().deviceId || selectedVideoId,
-      activeStream.getAudioTracks()[0]?.getSettings().deviceId || selectedAudioId,
-    );
-    if (!isCurrentSource()) return false;
-    videoPreview.srcObject = activeStream;
-    videoPreview.hidden = true;
-    document.querySelector('.preview-empty').hidden = true;
-    await videoPreview.play();
-    if (!isCurrentSource()) return false;
-    configureRelayCanvas(activeStream.getVideoTracks()[0]);
-    relayCanvas.hidden = false;
-    startPreviewPump();
-    if (/OBS Virtual Camera/i.test(activeStream.getVideoTracks()[0]?.label || '') &&
-      outputResolution.value.startsWith('portrait-') && videoPreview.videoWidth >= videoPreview.videoHeight && Number(rotateRange.value) === 0) {
-      showSnackbar('Đang cắt giữa nguồn ngang để xuất dọc. Xoay nguồn 90° trong OBS rồi chọn Xoay trái/phải để giữ đủ pixel.');
-    }
-    let session;
+async function usbSession(replace) {
+  const info = await request(`${USB_ORIGIN}/api/info`, {}, 30000);
+  if (!info.ok || (await info.json()).transport !== 'lan-jpeg-v1') throw new Error('usb_unavailable');
+  let previous;
+  try { previous = JSON.parse(sessionStore.getItem(USB_STORAGE)); } catch {}
+  if (previous?.expires * 1000 > Date.now() && !replace) return previous;
+  if (previous) await request(`${USB_ORIGIN}/api/rooms/${previous.room}?token=${encodeURIComponent(previous.token)}`, { method: 'DELETE' });
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const expires = Math.floor(Date.now() / 1000) + 3600;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const room = Array.from(crypto.getRandomValues(new Uint8Array(6)), (n) => alphabet[n % alphabet.length]).join('');
+    const token = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(24)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     try {
-      session = await ensurePairingSession(false);
+      const registered = await jsonRequest(`${USB_ORIGIN}/api/sessions`, 'POST', { room, token, expires });
+      const value = { room, code: registered.pairCode || room, token, expires, transport: 'usb' };
+      sessionStore.setItem(USB_STORAGE, JSON.stringify(value)); return value;
     } catch (error) {
-      if (!isCurrentSource()) return false;
-      const message = isUsbMode
-        ? 'Preview đã mở; chưa nối được đường truyền USB. Kiểm tra cáp và dịch vụ USB trên máy tính rồi bấm lại.'
-        : error.message === 'login_required' ? 'Đăng nhập Google để phát qua Cloud.' : 'Preview đã mở; chưa tạo được phiên Internet. Hãy kiểm tra kết nối rồi thử lại.';
-      relayStatus.textContent = message;
-      setPairingLiveState(message);
-      startRelay.textContent = 'Thử kết nối lại';
-      return true;
+      if (error.message !== 'room_busy') throw error;
     }
-    if (!isCurrentSource()) return false;
-    renderPairing(session);
-    relayStatus.textContent = session.transport === 'livekit'
-      ? 'Nguồn đã mở; đang kết nối Internet…'
-      : 'Nguồn đã mở; đang gửi frame đầu tiên qua USB…';
-    startRelay.textContent = 'Đổi / khởi động lại nguồn';
-    void publishFrames(session, relayGeneration);
-    if (showPairingAfter) setSheet(pairingSheet);
+  }
+  throw new Error('room_busy');
+}
+async function cancelUnused(value) {
+  if (!value) return { removed: false };
+  if (value.transport === 'livekit') return jsonRequest('/api/session', 'DELETE', { mode: 'if-unconnected', revision: value.revision });
+  const response = await jsonRequest(`${USB_ORIGIN}/api/rooms/${value.room}/close`, 'POST', { token: value.token });
+  if (response.removed) sessionStore.removeItem(USB_STORAGE);
+  return response;
+}
+function errorMessage(error) {
+  return error.name === 'NotAllowedError' ? 'Hãy cấp quyền camera và micro để tạo mã ghép nối.'
+    : error.message === 'room_busy' ? 'Phòng vừa thay đổi hoặc đang được xử lý. Hãy thử lại.'
+    : error.message === 'too_many_attempts' ? 'Bạn thao tác hơi nhanh. Vui lòng chờ một phút.'
+    : isUsbMode ? 'Chưa nối được USB. Kiểm tra dịch vụ USB và quyền truy cập mạng cục bộ.' : 'Chưa mở được nguồn hoặc phòng Cloud. Hãy thử lại.';
+}
+async function openPairing(replace = false, restart = false) {
+  if (opening || closing || !account) return false;
+  opening = true; busy(true);
+  const run = ++generation;
+  if (!dialog.open) dialog.showModal();
+  $('#pairingConnection').textContent = 'Đang chuẩn bị nguồn…';
+  let obtained;
+  try {
+    stopPublishing();
+    if (restart) { clearInterval(previewTimer); runtime.stopStream(activeStream); activeStream = undefined; }
+    await ensureSource(run);
+    if (run !== generation) throw new Error('cancelled');
+    obtained = isUsbMode ? await usbSession(replace) : await jsonRequest('/api/session', 'POST', { action: replace ? 'replace' : 'create', revision: session?.revision });
+    if (obtained.transport === 'livekit' && obtained.ownerId !== account.id) throw new Error('login_required');
+    if (run !== generation) { await cancelUnused(obtained); return false; }
+    session = obtained; renderPairing(session);
+    if (isUsbMode) { publishTask = publishUsb(session, run); }
+    else { publishTask = publishCloud(session, run); await publishTask; }
     return true;
   } catch (error) {
-    if (!isCurrentSource()) return false;
-    studioRuntime.record('source-start-failed', error);
-    stopPreviewPump();
-    studioRuntime.stopStream(activeStream);
-    activeStream = undefined;
-    videoPreview.srcObject = null;
-    videoPreview.hidden = true;
-    relayCanvas.hidden = true;
-    sourceFrameWidth = 0;
-    sourceFrameHeight = 0;
-    document.querySelector('.preview-empty').hidden = false;
-    const errorMessage = error.name === 'NotAllowedError'
-        ? 'Bạn chưa cấp quyền truy cập camera.'
-        : 'Không mở được camera/OBS hoặc đường truyền.';
-    relayStatus.textContent = errorMessage;
-    previewResolution.textContent = 'Chưa có nguồn';
-    startRelay.textContent = 'Thử lại';
-    setPairingLiveState(errorMessage);
-    return false;
-  } finally {
-    if (acquiredStream && !isCurrentSource()) {
-      studioRuntime.stopStream(acquiredStream);
-      if (activeStream === acquiredStream) activeStream = undefined;
+    if (error.message === 'login_required') location.replace('/login');
+    if (error.message !== 'cancelled' && run === generation) { showSnackbar(errorMessage(error)); $('#pairingConnection').textContent = errorMessage(error); }
+    if (run === generation) {
+      stopSource();
+      if (obtained) { try { const outcome = await cancelUnused(obtained); if (!outcome.kept) session = undefined; } catch {} }
     }
-    sourceStartInFlight = false;
-    startRelay.disabled = false;
-    if (!isCurrentSource()) startRelay.textContent = 'Bật camera / OBS';
-  }
+    return false;
+  } finally { opening = false; busy(false); }
 }
-
-startRelay.addEventListener('click', () => { void startDesktopSource(); });
-document.querySelectorAll('.permission-button').forEach((button) => {
-  button.addEventListener('click', () => {
-    document.querySelector(isUsbMode ? '#nearSource' : '#computerSource').click();
-    void startDesktopSource();
-  });
-});
-
-sessionStore.removeItem('camstudio-access-key');
-localStore.removeItem(PAIRING_STORAGE_KEY); // Remove legacy Cloud credentials; account database is authoritative.
-accountReady = loadAccount();
-void accountReady.then(async (user) => {
-  if (!user || isUsbMode) return;
+async function closePairing() {
+  if (closing) return;
+  if (opening) generation++;
+  closing = true; $('#closePairing').disabled = true;
   try {
-    const session = await createRemoteSession(false, true);
-    if (session && !isUsbMode && account?.id === user.id) renderPairing(session);
-  } catch { /* Explicit pairing action offers retry; bootstrap never creates a room. */ }
+    const value = session;
+    const result = value ? await cancelUnused(value) : { removed: true };
+    if (!result.kept) { stopSource(); session = undefined; clearInterval(expiryTimer); $('#pairButton').textContent = 'Tạo mã ghép nối ↗'; $('#sessionBadge').textContent = 'Chưa kết nối'; }
+    else setConnection(true);
+    dialog.close();
+  } catch { showSnackbar('Chưa xác nhận được trạng thái phòng. Hãy thử đóng lại.'); }
+  finally { closing = false; $('#closePairing').disabled = false; }
+}
+$('#pairButton').addEventListener('click', () => { void openPairing(); });
+$('#newPairing').addEventListener('click', () => { void openPairing(true); });
+$('#restartSource').addEventListener('click', () => { void openPairing(false, true); });
+$('#closePairing').addEventListener('click', () => { void closePairing(); });
+dialog.addEventListener('cancel', (event) => { event.preventDefault(); void closePairing(); });
+dialog.addEventListener('click', (event) => { if (event.target === dialog) { const r = dialog.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) void closePairing(); } });
+for (const [selector, kind] of [['#copyCode', 'code'], ['#copyPassword', 'password'], ['#copyPairing', 'link']]) {
+  $(selector).addEventListener('click', async () => {
+    if (!session) return;
+    try { await navigator.clipboard.writeText(kind === 'link' ? invitation(session) : session[kind] || session.room); showSnackbar('Đã sao chép'); }
+    catch { showSnackbar('Chưa sao chép được. Bạn có thể quét QR.'); }
+  });
+}
+for (const [selector, usb] of [['#computerSource', false], ['#nearSource', true]]) {
+  $(selector).addEventListener('click', async () => {
+    if (opening || closing || isUsbMode === usb) return;
+    if (session) { try { await cancelUnused(session); } catch { showSnackbar('Chưa đổi được đường truyền. Hãy thử lại.'); return; } }
+    stopSource(); session = undefined; clearInterval(expiryTimer); isUsbMode = usb; updateTransport();
+    $('#pairButton').textContent = 'Tạo mã ghép nối ↗'; $('#sessionBadge').textContent = 'Chưa kết nối';
+  });
+}
+for (const control of [outputResolution, outputFps, videoDevice, audioDevice]) control.addEventListener('change', () => { if (hasSource()) showSnackbar('Bấm Đổi / khởi động lại nguồn để áp dụng thay đổi.'); });
+$('#logoutButton').addEventListener('click', async () => {
+  if (opening || closing) return;
+  $('#logoutButton').disabled = true;
+  try {
+    if (session) await cancelUnused(session);
+    const response = await request('/api/auth?route=logout', { method: 'POST' });
+    if (!response.ok) throw new Error();
+    stopSource(); session = undefined; location.replace('/login');
+  } catch { showSnackbar('Chưa đăng xuất được. Hãy thử lại.'); $('#logoutButton').disabled = false; }
 });
-const loginResult = new URLSearchParams(window.location.search).get('login');
-if (loginResult) {
-  showAccount();
-  showSnackbar('Chưa đăng nhập được Google. Hãy thử lại.');
-  const cleanUrl = new URL(window.location.href);
-  cleanUrl.searchParams.delete('login');
-  window.history.replaceState(null, '', cleanUrl);
-}
-const activeSession = readPairingSession();
-if (activeSession) {
-  ensurePairingSession(false).then(renderPairing).catch(() => revokePairing('Phiên cũ không còn hoạt động'));
-}
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then((registrations) => {
-    registrations.forEach((registration) => {
-      if (new URL(registration.scope).origin === location.origin) registration.unregister();
-    });
-  }).catch(() => {});
-}
-
+$('#snackbarAction').addEventListener('click', () => { $('#snackbar').hidden = true; });
+function setTheme(theme) { document.documentElement.dataset.theme = theme; localStore.setItem('camvirtual-theme', theme); }
+setTheme(localStore.getItem('camvirtual-theme') || 'dark');
+$('#themeToggle').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
+updateTransport();
+sessionStore.removeItem('camstudio-access-key'); localStore.removeItem('camvirtual-pairing-session-v1');
+void (async () => {
+  try {
+    const response = await request('/api/auth?route=me'); if (!response.ok) throw new Error();
+    account = (await response.json()).user;
+    if (!account) { location.replace('/login'); return; }
+    $('#accountEmail').textContent = account.email;
+    busy(false);
+    if (!isUsbMode) {
+      const restored = await request('/api/session');
+      if (restored.ok) { session = await restored.json(); renderPairing(session); }
+    }
+  } catch { busy(true); showSnackbar('Chưa kiểm tra được tài khoản. Vui lòng tải lại trang.'); }
+})();
+busy(true);
 window.addEventListener('pagehide', () => {
-  studioRuntime.record('page-hidden');
-  relayRunning = false;
-  relayGeneration += 1;
-  sourceGeneration += 1;
-  stopCanvasPump();
-  stopPreviewPump();
-  studioRuntime.stopStream(activeStream);
-  activeStream = undefined;
-  videoPreview.srcObject = null;
-  const room = liveKitRoom;
-  liveKitRoom = undefined;
-  if (room) void room.disconnect().catch(() => {});
-  window.clearInterval(expiryTimer);
+  if (session && !session.connected && session.transport === 'livekit') {
+    const body = JSON.stringify({ action: 'cancel', mode: 'if-unconnected', revision: session.revision });
+    navigator.sendBeacon?.('/api/session', new Blob([body], { type: 'application/json' }));
+  }
+  stopSource(); clearInterval(expiryTimer); runtime.record('page-hidden');
 });
-window.addEventListener('pageshow', (event) => {
-  if (!event.persisted) return;
-  videoPreview.hidden = true;
-  relayCanvas.hidden = true;
-  sourceFrameWidth = 0;
-  sourceFrameHeight = 0;
-  document.querySelector('.preview-empty').hidden = false;
-  previewResolution.textContent = 'Chưa có nguồn';
-  relayStatus.textContent = 'Nguồn đã đóng khi rời trang. Bấm Bật camera / OBS để mở lại.';
-  startRelay.textContent = 'Bật camera / OBS';
-  startRelay.disabled = sourceStartInFlight;
-});
-studioRuntime.markReady();
+window.addEventListener('pageshow', (event) => { if (event.persisted) location.reload(); });
+if ('serviceWorker' in navigator) void navigator.serviceWorker.getRegistrations().then((items) => items.forEach((item) => { if (new URL(item.scope).origin === location.origin) void item.unregister(); })).catch(() => {});
+runtime.markReady();

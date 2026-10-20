@@ -2,162 +2,108 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { webcrypto } from 'node:crypto';
 
-const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-const runtime = readFileSync(new URL('../studio-runtime.js', import.meta.url), 'utf8');
-const app = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
-
-// Minimal DOM fixture using the real HTML IDs/classes. No real device, browser,
-// image capture, credentials, or network is used by these bootstrap tests.
-function fixture({ query = '', deniedStorage = false, acquire } = {}) {
-  const nodes = [], ids = new Map(), windowEvents = new Map(), timers = new Map();
-  let nextTimer = 0;
-  for (const match of html.matchAll(/<([a-zA-Z][\w:-]*)\b([^>]*)>/g)) {
-    const attrs = Object.fromEntries([...match[2].matchAll(/([\w:-]+)="([^"]*)"/g)].map((item) => [item[1], item[2]]));
-    const classes = new Set((attrs.class || '').split(/\s+/));
-    const events = new Map();
-    const node = { id: attrs.id || '', tagName: match[1].toUpperCase(), attrs, events, style: {}, dataset: {}, hidden: false, value: attrs.value || '', textContent: '', innerHTML: '', options: [], selectedOptions: [],
-      classList: { add: (...items) => items.forEach((item) => classes.add(item)), remove: (...items) => items.forEach((item) => classes.delete(item)), contains: (item) => classes.has(item), toggle(item, force) { const on = force ?? !classes.has(item); if (on) classes.add(item); else classes.delete(item); return on; } },
-      addEventListener(name, fn) { events.set(name, fn); }, click() { events.get('click')?.(); }, setAttribute(name, value) { attrs[name] = value; }, getAttribute(name) { return attrs[name]; }, focus() {}, closest() { return null; },
-      querySelector() { return null; }, replaceChildren(...items) { this.options = items; }, add(item) { this.options.push(item); },
-      pause() {}, async play() {}, videoWidth: 1080, videoHeight: 1920,
-      getContext: () => ({ setTransform() {}, clearRect() {}, translate() {}, rotate() {}, scale() {}, drawImage() {} }),
+const html=readFileSync(new URL('../index.html',import.meta.url),'utf8');
+const runtime=readFileSync(new URL('../studio-runtime.js',import.meta.url),'utf8');
+const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
+const user={id:'test-user',email:'user@example.test'};
+const room=(revision='revision-one')=>({ownerId:user.id,code:'ABCDEF',room:'ABCDEF',password:'ABCDEFGHJK',transport:'livekit',revision,expires:Math.floor(Date.now()/1000)+3600,state:'waiting'});
+const ok=(body,status=200)=>({ok:status>=200&&status<300,status,json:async()=>body});
+function source() {
+  const tracks=[{kind:'video'},{kind:'audio'}].map((track)=>({...track,readyState:'live',stops:0,stop(){this.stops++;this.readyState='ended';},addEventListener(){},getSettings:()=>({width:1920,height:1080,frameRate:30,deviceId:''})}));
+  return {tracks,getTracks:()=>tracks,getVideoTracks:()=>tracks.filter(t=>t.kind==='video'),getAudioTracks:()=>tracks.filter(t=>t.kind==='audio')};
+}
+function fixture({acquire,existing,connected=false,intercept}={}) {
+  const nodes=new Map(), classes=new Map(), events=new Map(), timers=new Map(), calls=[], redirects=[], streams=[], rooms=[];
+  let nextTimer=0, saved=existing;
+  for(const match of html.matchAll(/<([a-zA-Z][\w:-]*)\b([^>]*)>/g)) {
+    const attrs=Object.fromEntries([...match[2].matchAll(/([\w:-]+)="([^"]*)"/g)].map(item=>[item[1],item[2]]));
+    const set=new Set((attrs.class||'').split(/\s+/));
+    const node={id:attrs.id||'',attrs,events:new Map(),style:{},hidden:match[2].includes(' hidden'),value:'',textContent:'',innerHTML:'',open:false,disabled:false,
+      classList:{toggle(name,on){if(on??!set.has(name))set.add(name);else set.delete(name);}},
+      addEventListener(name,fn){this.events.set(name,fn);},setAttribute(name,value){attrs[name]=value;},getAttribute(name){return attrs[name];},
+      showModal(){this.open=true;},close(){this.open=false;},getBoundingClientRect(){return {left:0,top:0,right:1000,bottom:1000};},
+      replaceChildren(){},add(){},pause(){},async play(){},videoWidth:1920,videoHeight:1080,
+      getContext:()=>({setTransform(){},clearRect(){},drawImage(){}}),captureStream:()=>source(),toBlob(cb){cb(new Blob(['test-frame']));},
     };
-    for (const [key, value] of Object.entries(attrs)) if (key.startsWith('data-')) node.dataset[key.slice(5).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())] = value;
-    nodes.push(node); if (attrs.id) ids.set(attrs.id, node);
+    if(attrs.id)nodes.set(attrs.id,node); for(const name of set)if(name)classes.set(name,node);
   }
-  ids.get('outputResolution').value = 'portrait-source';
-  ids.get('outputFps').value = '30'; ids.get('zoomRange').value = '100'; ids.get('rotateRange').value = '0';
-  const queryAll = (selector) => {
-    if (selector === '.segmented-control button') return nodes.filter((node) => node.tagName === 'BUTTON' && node.attrs['data-mode']);
-    if (selector.startsWith('.')) return nodes.filter((node) => node.classList.contains(selector.slice(1)));
-    return [];
-  };
-  const document = { documentElement: { dataset: {} }, body: { style: {} },
-    getElementById: (id) => ids.get(id) || null,
-    querySelector(selector) { if (selector.startsWith('#')) return ids.get(selector.slice(1)) || null; if (selector.startsWith('.')) return queryAll(selector)[0] || null; if (selector.startsWith('meta[')) return nodes.find((node) => node.tagName === 'META' && node.attrs.name === 'theme-color'); return null; },
-    querySelectorAll: queryAll, addEventListener() {},
-  };
-  const local = new Map(), session = new Map();
-  const storage = (map) => ({ getItem: (key) => map.get(key) ?? null, setItem: (key, value) => map.set(key, value), removeItem: (key) => map.delete(key) });
-  const location = new URL('https://campoc.onrender.com/' + query);
-  const context = vm.createContext({ document, URL, URLSearchParams, AbortController, performance, location,
-    navigator: { mediaDevices: { getUserMedia: acquire || (async () => { throw new Error('No synthetic source configured'); }), enumerateDevices: async () => [] } },
-    localStorage: storage(local), sessionStorage: storage(session),
-    history: { replaceState(_state, _title, url) { location.href = String(url); } },
-    matchMedia: () => ({ matches: false }), prompt: () => '', Option: function (text, value) { this.textContent = text; this.value = value; },
-    setTimeout(fn, ms) { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; }, clearTimeout(id) { timers.delete(id); },
-    setInterval(fn, ms) { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; }, clearInterval(id) { timers.delete(id); },
-    addEventListener: (name, fn) => windowEvents.set(name, fn), fetch: async (url) => url === '/api/session'
-      ? { ok: false, status: 401 }
-      : { ok: true, status: 200, json: async () => ({ transport: 'livekit-v2' }) },
-  });
-  context.window = context;
-  if (deniedStorage) Object.defineProperty(context, 'localStorage', { get() { throw new Error('Storage denied'); } });
-  vm.runInContext(runtime, context); vm.runInContext(app, context);
-  return { context, ids, local, session, windowEvents, run: (expression) => vm.runInContext(expression, context) };
+  nodes.get('outputResolution').value='portrait-source'; nodes.get('outputFps').value='30';
+  const local=new Map(), sessionStorage=new Map();
+  const storage=(map)=>({getItem:key=>map.get(key)??null,setItem:(key,value)=>map.set(key,value),removeItem:key=>map.delete(key)});
+  const location=new URL('https://studio.test/?transport=cloud');location.replace=(value)=>redirects.push(value);location.reload=()=>redirects.push('reload');
+  const context=vm.createContext({URL,URLSearchParams,AbortController,performance,Blob,btoa,crypto:webcrypto,location,Option:function(text,value){this.textContent=text;this.value=value;},
+    document:{documentElement:{dataset:{}},querySelector(selector){return selector.startsWith('#')?nodes.get(selector.slice(1)):classes.get(selector.slice(1));},getElementById:id=>nodes.get(id)},
+    localStorage:storage(local),sessionStorage:storage(sessionStorage),history:{replaceState(_a,_b,url){location.href=String(url);}},
+    navigator:{mediaDevices:{getUserMedia:async()=>{const value=acquire?await acquire():source();streams.push(value);return value;},enumerateDevices:async()=>[]},clipboard:{writeText:async()=>{}},sendBeacon(){}},
+    setTimeout(fn,ms){const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearTimeout(id){timers.delete(id);},
+    setInterval(fn,ms){const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearInterval(id){timers.delete(id);},
+    addEventListener:(name,fn)=>events.set(name,fn),qrcode:()=>({addData(value){this.value=value;},make(){},createSvgTag(){return '<svg>test QR</svg>';}}),
+    LivekitClient:{RoomEvent:{ParticipantConnected:'participant',Reconnecting:'reconnecting',Reconnected:'reconnected',Disconnected:'disconnected'},Track:{Source:{Camera:'camera',Microphone:'microphone'}},
+      Room:class{constructor(){this.handlers=new Map();this.published=[];this.localParticipant={publishTrack:async(track)=>this.published.push(track)};rooms.push(this);}on(name,fn){this.handlers.set(name,fn);}async connect(){this.connected=true;}async disconnect(){this.connected=false;}}
+    },
+    fetch:async(url,init={})=>{
+      const data=init.body&&typeof init.body==='string'?JSON.parse(init.body):undefined;calls.push({url,method:init.method||'GET',data});
+      const replacement=intercept?.(url,init,data);if(replacement)return await replacement;
+      if(url.startsWith('/api/auth?route=me'))return ok({configured:true,user});
+      if(url.includes('route=logout'))return ok({ok:true});
+      if(url.includes('action=status'))return ok({revision:saved?.revision,connected});
+      if(url==='/api/session'){
+        if(init.method==='DELETE'||data?.action==='cancel'){if(connected)return ok({kept:true});saved=undefined;return ok({removed:true});}
+        if(data?.action==='publisher')return ok({livekitUrl:'wss://test.livekit.cloud',token:'test-token'});
+        if(init.method==='POST'){saved=room(data?.action==='replace'?'revision-two':'revision-one');return ok(saved,201);}
+        return saved?ok(saved):ok({},404);
+      }
+      throw new Error('unexpected request');
+    },
+  });context.window=context;
+  vm.runInContext(runtime,context);vm.runInContext(app,context);
+  return {run:code=>vm.runInContext(code,context),context,nodes,calls,streams,rooms,redirects,events,settle:()=>new Promise(resolve=>setImmediate(resolve))};
 }
 
-function stream() {
-  const track = { readyState: 'live', stops: 0, stop() { this.stops++; this.readyState = 'ended'; }, getSettings: () => ({ width: 1080, height: 1920, frameRate: 30 }) };
-  return { track, getTracks: () => [track], getVideoTracks: () => [track], getAudioTracks: () => [] };
-}
-
-test('real Studio scripts bootstrap with USB query and select the correct controls', () => {
-  const f = fixture({ query: '?transport=usb' });
-  assert.equal(f.run('isUsbMode'), true);
-  assert.equal(f.ids.get('nearSource').classList.contains('selected'), true);
-  assert.equal(f.ids.get('desktopSourceControls').hidden, false);
-  assert.ok(JSON.parse(f.session.get('camstudio-health-v1')).some((entry) => entry.kind === 'ready'));
+test('create pairing starts camera and publishes automatically without a second action',async()=>{
+  const f=fixture();await f.settle();assert.equal(await f.run('openPairing()'),true);
+  assert.equal(f.streams.length,1);assert.equal(f.rooms[0].published.length,2);assert.equal(f.nodes.get('pairingDialog').open,true);
+  assert.equal(f.nodes.get('pairingCode').textContent,'ABCDEF');assert.equal(f.nodes.get('pairingPassword').textContent,'ABCDEFGHJK');
+  assert.ok(f.run('invitation(session)').startsWith('camvirtual://connect?'));assert.equal(f.run('invitation(session)').includes('token='),false);
 });
-
-test('blocked browser storage does not stop real Studio bootstrap', () => {
-  const f = fixture({ deniedStorage: true });
-  assert.ok(JSON.parse(f.session.get('camstudio-health-v1')).some((entry) => entry.kind === 'ready'));
+test('rapid duplicate create requests do not duplicate capture or create rooms twice',async()=>{
+  let resolve;const pending=new Promise(yes=>{resolve=yes;});const f=fixture({acquire:()=>pending});await f.settle();
+  const opening=f.run('openPairing()');assert.equal(await f.run('openPairing()'),false);resolve(source());await opening;
+  assert.equal(f.streams.length,1);assert.equal(f.calls.filter(c=>c.data?.action==='create').length,1);
 });
-
-test('rapid source-start requests result in a single getUserMedia request', async () => {
-  let resolve, calls = 0;
-  const pending = new Promise((yes) => { resolve = yes; });
-  const f = fixture({ acquire: () => { calls++; return pending; } });
-  const first = f.run('startDesktopSource()');
-  assert.equal(await f.run('startDesktopSource()'), false);
-  await new Promise((done) => setImmediate(done));
-  assert.equal(calls, 1);
-  const source = stream(); resolve(source);
-  assert.equal(await first, true);
-  f.windowEvents.get('pagehide')();
-  assert.equal(source.track.stops, 1);
-  assert.equal(f.run('activeStream'), undefined);
+test('closing unused modal removes matching revision and releases every track',async()=>{
+  const f=fixture();await f.settle();await f.run('openPairing()');await f.run('closePairing()');
+  assert.equal(f.nodes.get('pairingDialog').open,false);assert.equal(f.run('session'),undefined);
+  assert.ok(f.streams[0].tracks.every(track=>track.readyState==='ended'));
+  assert.equal(f.calls.find(c=>c.method==='DELETE').data.revision,'revision-one');
 });
-
-test('changing source while acquisition is pending disposes the late stream', async () => {
-  let resolve;
-  const pending = new Promise((yes) => { resolve = yes; });
-  const f = fixture({ acquire: () => pending });
-  const first = f.run('startDesktopSource()');
-  await new Promise((done) => setImmediate(done));
-  f.ids.get('nearSource').click();
-  const source = stream(); resolve(source);
-  assert.equal(await first, false);
-  assert.equal(source.track.stops, 1);
-  assert.equal(f.run('activeStream'), undefined);
-  assert.equal(f.ids.get('startRelay').disabled, false);
+test('closing a connected modal keeps media and the room running',async()=>{
+  const f=fixture({connected:true});await f.settle();await f.run('openPairing()');await f.run('closePairing()');
+  assert.equal(f.nodes.get('pairingDialog').open,false);assert.equal(f.run('session.connected'),true);
+  assert.ok(f.streams[0].tracks.every(track=>track.readyState==='live'));
 });
-
-const remoteSession = { version: 2, transport: 'livekit', ownerId: 'user-one', room: 'TEST', expires: 2000000000,
-  receiverToken: 'receiver', publisherToken: 'publisher', livekitUrl: 'wss://test.livekit.cloud' };
-
-test('signed-in Cloud session restores from database without any key prompt', async () => {
-  const f = fixture();
-  await f.run('accountReady');
-  f.run("account = { id: 'user-one', email: 'one@example.test' }");
-  f.context.prompt = () => { throw new Error('must never prompt for a key'); };
-  f.context.fetch = async (_url, init) => {
-    assert.equal(init.credentials, 'same-origin');
-    assert.equal(init.method, 'GET');
-    assert.equal(init.headers, undefined);
-    return { ok: true, status: 200, json: async () => remoteSession };
-  };
-  assert.equal((await f.run('createRemoteSession()')).room, 'TEST');
-  assert.equal(f.local.has('camvirtual-pairing-session-v1'), false);
+test('new code is prominent action that replaces revision and publishes the new room',async()=>{
+  const f=fixture();await f.settle();await f.run('openPairing()');await f.run('openPairing(true)');
+  assert.equal(f.run('session.revision'),'revision-two');assert.equal(f.streams.length,1);assert.equal(f.rooms.length,2);
+  assert.equal(f.calls.find(c=>c.data?.action==='replace').data.revision,'revision-one');
 });
-
-test('logged-out Cloud shows Google login without requesting a key or creating a room', async () => {
-  const f = fixture();
-  await f.run('accountReady');
-  f.context.prompt = () => { throw new Error('must never prompt for a key'); };
-  f.context.fetch = () => { throw new Error('must not create a room'); };
-  await assert.rejects(f.run('createRemoteSession()'), { message: 'login_required' });
-  assert.equal(f.ids.get('accountPanel').hidden, false);
+test('closing while camera permission is pending disposes a late stream and creates no room',async()=>{
+  let resolve;const pending=new Promise(yes=>{resolve=yes;});const f=fixture({acquire:()=>pending});await f.settle();
+  const opening=f.run('openPairing()');await f.run('closePairing()');const media=source();resolve(media);await opening;
+  assert.ok(media.tracks.every(track=>track.readyState==='ended'));assert.equal(f.calls.some(c=>c.data?.action==='create'),false);
 });
-
-test('missing saved Cloud room creates a new room after account authentication', async () => {
-  const f = fixture();
-  await f.run('accountReady');
-  f.run("account = { id: 'user-one', email: 'one@example.test' }");
-  const methods = [];
-  f.context.fetch = async (_url, init) => {
-    methods.push(init.method);
-    return init.method === 'GET' ? { status: 404 } : { ok: true, status: 201, json: async () => remoteSession };
-  };
-  assert.equal((await f.run('createRemoteSession()')).room, 'TEST');
-  assert.deepEqual(methods, ['GET', 'POST']);
+test('a room response arriving after modal close is cancelled rather than published',async()=>{
+  let resolve,signal;const pending=new Promise(yes=>{resolve=yes;});const started=new Promise(yes=>{signal=yes;});
+  const f=fixture({intercept(_url,_init,data){if(data?.action==='create'){signal();return pending;}}});await f.settle();
+  const opening=f.run('openPairing()');await started;await f.run('closePairing()');resolve(ok(room(),201));await opening;
+  assert.equal(f.rooms.length,0);assert.equal(f.calls.some(c=>c.method==='DELETE'&&c.data.revision==='revision-one'),true);
 });
-
-test('passive Cloud restore never creates a room when the saved room is expired', async () => {
-  const f = fixture();
-  await f.run('accountReady');
-  f.run("account = { id: 'user-one', email: 'one@example.test' }");
-  f.context.fetch = async (_url, init) => { assert.equal(init.method, 'GET'); return { status: 404 }; };
-  assert.equal(await f.run('createRemoteSession(false, true)'), null);
+test('restoring saved pairing never opens the source before user action',async()=>{
+  const f=fixture({existing:room()});await f.settle();assert.equal(f.streams.length,0);assert.equal(f.run('session.code'),'ABCDEF');
 });
-
-test('a response from a different signed-in account cannot populate the QR', async () => {
-  const f = fixture();
-  await f.run('accountReady');
-  f.run("account = { id: 'user-one', email: 'one@example.test' }");
-  f.context.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ...remoteSession, ownerId: 'user-two' }) });
-  await assert.rejects(f.run('createRemoteSession()'), { message: 'account_changed' });
-  assert.equal(f.run('cloudPairing'), undefined);
+test('logout closes media and sends the user to login',async()=>{
+  const f=fixture();await f.settle();await f.run('openPairing()');await f.nodes.get('logoutButton').events.get('click')();
+  assert.ok(f.streams[0].tracks.every(track=>track.readyState==='ended'));assert.equal(f.redirects.at(-1),'/login');
 });

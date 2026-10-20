@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="vi" data-theme="dark">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#111116"><title>Đăng nhập · Cam Studio</title>
+  <link rel="stylesheet" href="styles.css?v=studio-accounts-16">
+</head>
+<body class="auth-page">
+  <main class="auth-layout">
+    <section class="auth-intro" aria-label="Cam Studio">
+      <a class="brand" href="/login"><span class="brand-mark">C</span><span><strong>Cam Studio</strong><small>CAMERA · OBS · CLOUD</small></span></a>
+      <div><p class="eyebrow">Kết nối theo cách của bạn</p><h1>Nguồn hình của bạn.<br>Luôn trong tầm tay.</h1>
+        <p>Đưa camera và OBS từ máy tính tới điện thoại. Quản lý phòng ghép nối riêng trong tài khoản của bạn.</p></div>
+      <p class="auth-footnote">Mã phòng và mật khẩu riêng cho mỗi lần kết nối.</p>
+    </section>
+    <section class="auth-card" aria-labelledby="authTitle">
+      <nav class="auth-tabs" aria-label="Tài khoản"><button id="loginTab" class="selected" type="button" aria-pressed="true">Đăng nhập</button><button id="signupTab" type="button" aria-pressed="false">Tạo tài khoản</button></nav>
+      <p class="section-kicker">CHÀO MỪNG ĐẾN CAM STUDIO</p>
+      <h2 id="authTitle">Đăng nhập để tiếp tục</h2>
+      <p id="authDescription">Chọn tài khoản Google để mở không gian Studio của bạn.</p>
+      <a class="google-button" id="googleSignIn" href="/api/auth?route=login" aria-disabled="true"><span aria-hidden="true">G</span><span id="googleActionText">Tiếp tục với Google</span></a>
+      <p class="auth-message" id="authMessage" role="status" aria-live="polite">Đang kiểm tra kết nối…</p>
+      <div class="auth-details"><span>Không cần nhập key</span><span>QR được lưu theo tài khoản</span></div>
+      <p class="auth-note">Lần đầu đăng nhập Google, tài khoản Cam Studio của bạn sẽ được tạo tự động. Chúng tôi không nhận mật khẩu Google của bạn.</p>
+      <a class="privacy-link" href="/privacy">Quyền riêng tư</a>
+    </section>
+  </main>
+  <script src="login.js?v=studio-accounts-16"></script>
+</body>
+</html>

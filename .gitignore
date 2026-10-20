@@ -1,7 +1,10 @@
 .env
+client_secret*.json
 .env.*
 !.env.example
 .vercel
 node_modules
 npm-debug.log*
+__pycache__/
+*.pyc
 

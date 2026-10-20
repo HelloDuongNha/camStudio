@@ -15,7 +15,15 @@ services:
         sync: false
       - key: APP_ORIGIN
         value: https://campoc.onrender.com
-      - key: DATABASE_URL
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DATABASE
+        value: camstudio
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: ROOM_SECRET_KEY
+        sync: false
+      - key: REDIS_URL
         sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false

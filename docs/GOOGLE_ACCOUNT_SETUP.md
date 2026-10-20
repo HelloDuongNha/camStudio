@@ -1,63 +1,16 @@
-# Đưa đăng nhập Google lên Cam Studio
+# Thiết lập Google, MongoDB Atlas và Render
 
-## Trạng thái bản sửa
+1. Tạo/chọn Google Cloud project, tạo OAuth client **Web application** riêng cho Cam Studio. Callback: `https://campoc.onrender.com/api/auth?route=callback`; JavaScript origin: `https://campoc.onrender.com`.
+2. Audience External, chỉ xin openid/email/profile. Kiểm tra Branding và các yêu cầu Google hiển thị; chuyển Production khi phát hành cho mọi tài khoản Google.
+3. Lưu JSON OAuth ở máy chủ/`.env`, không commit. Người dùng cuối không nhập Client ID, Client Secret hoặc access key.
+4. Tạo project/cluster MongoDB Atlas riêng. User database dùng role `readWrite` trên `camstudio`, không cần `atlasAdmin`. Cho phép kết nối từ máy quản trị/Render bằng IP access list phù hợp.
+5. Đặt `MONGODB_URI`, `MONGODB_DATABASE=camstudio`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_ORIGIN` trong Render Environment. Giữ cấu hình LiveKit hiện có.
+6. Sinh `ROOM_SECRET_KEY` bằng 32 byte ngẫu nhiên, lưu 64 ký tự hex. Giữ ổn định; đổi khóa làm lời mời cũ không khôi phục được mật khẩu và cần tạo phòng mới. Sao lưu khóa riêng với database.
+7. Redis tùy chọn: đặt `REDIS_URL` nếu có. Không cần Redis để bảo toàn dữ liệu/phân quyền; MongoDB vẫn là nguồn quyết định. Không dùng Redis public không được bảo vệ.
+8. Render: build `npm ci`, start `npm start`, health `/healthz`. Cấu hình xong trước khi triển khai để không gián đoạn đăng nhập.
+9. Kiểm tra bằng hai tài khoản Google: tạo tài khoản mới, vào Studio, logout, mở link trực tiếp khi chưa login, QR theo chủ sở hữu, thay mã và đóng modal trước/sau kết nối.
+10. Cài APK CamPOC và Browser LSPatch có module mới. Kiểm tra quét QR mới hoặc nhập code/password, nguồn tự phát, đổi mã ngắt phòng cũ.
 
-- Mọi tài khoản Google có email đã xác minh đều có thể đăng nhập, không giới hạn Gmail.
-- Mỗi tài khoản có một phòng Cloud và QR riêng. QR còn hạn được mở lại từ PostgreSQL khi đăng nhập trên máy khác.
-- Phiên đăng nhập có hạn 30 ngày; QR Cloud có hạn một giờ. Không kéo dài QR bằng việc mở lại trang.
-- Studio không hỏi khóa truy cập. Không lưu mật khẩu Google, token Google, ảnh QR hoặc video trong database.
-- USB vẫn dùng relay trên máy tính và không cần đăng nhập Google.
+MongoDB tự tạo các collections `users`, `logins`, `oauth_states`, `pairings`, `owner_locks`, `rate_limits` và indexes. Hash phiên đăng nhập, password hash và mật khẩu đã mã hóa không được gửi ra API công khai. Database không lưu video, token Google hoặc JWT media.
 
-## Cần tạo một lần cho chủ website
-
-### 1. PostgreSQL
-
-Tạo database PostgreSQL riêng tại nhà cung cấp của bạn. Trên Render, dùng kết nối nội bộ nếu database cùng môi trường với Web Service. Đặt connection string vào biến `DATABASE_URL` của Web Service. Với kết nối bên ngoài, giữ TLS và xác minh chứng chỉ theo hướng dẫn nhà cung cấp.
-
-Server sẽ tạo bảng trong `db/schema.sql` khi truy cập database lần đầu; user database cần quyền tạo bảng và index. Không lưu database vào filesystem tạm của Web Service. Kiểm tra chính sách lưu trữ, sao lưu và giới hạn của database trước khi dùng lâu dài.
-
-### 2. Google OAuth
-
-1. Mở Google Cloud Console, tạo/chọn một project cho Cam Studio.
-2. Vào Google Auth Platform, cấu hình Branding: tên ứng dụng, email hỗ trợ và thông tin website theo yêu cầu Google hiển thị.
-3. Chọn Audience **External** vì website phục vụ nhiều người dùng. Trong giai đoạn thử, thêm Test users để kiểm thử. Khi phát hành, chuyển sang Production và hoàn tất yêu cầu Google nếu có.
-4. Tạo OAuth client loại **Web application**.
-5. Authorized redirect URI phải khớp chính xác:
-
-   `https://campoc.onrender.com/api/auth?route=callback`
-
-6. Đặt Client ID vào `GOOGLE_CLIENT_ID` và Client Secret vào `GOOGLE_CLIENT_SECRET` trên Render. Đặt `APP_ORIGIN=https://campoc.onrender.com`.
-
-Client ID/secret là cấu hình cho chủ web, không phải khóa mà người dùng cuối phải nhập. Ứng dụng chỉ yêu cầu `openid`, `email`, `profile`, không xin quyền Drive/Gmail.
-
-## Trước khi triển khai
-
-Web Service cần các biến sau:
-
-| Biến | Chức năng |
-| --- | --- |
-| `APP_ORIGIN` | Origin Studio, không có path/query |
-| `DATABASE_URL` | Kết nối PostgreSQL |
-| `GOOGLE_CLIENT_ID` | OAuth Web client |
-| `GOOGLE_CLIENT_SECRET` | OAuth Web client secret |
-| `LIVEKIT_URL` | Giữ cấu hình LiveKit hiện tại |
-| `LIVEKIT_API_KEY` | Giữ cấu hình LiveKit hiện tại |
-| `LIVEKIT_API_SECRET` | Giữ cấu hình LiveKit hiện tại |
-
-`CAMSTUDIO_ACCESS_KEY` không còn được dùng. Hoàn tất cấu hình trước khi deploy vì bản mới yêu cầu đăng nhập Google cho Cloud.
-
-## Kiểm tra sau triển khai
-
-1. Chọn nút G rồi Tiếp tục với Google. Tài khoản mới tự được tạo sau khi Google xác thực thành công.
-2. Tạo QR Cloud, quét bằng CamPOC và kiểm tra phát hình.
-3. Đăng nhập cùng tài khoản trên trình duyệt khác: mở lại cùng phòng còn hạn, không tự gia hạn QR.
-4. Đăng nhập tài khoản Google khác: không thấy phòng của tài khoản trước.
-5. Đăng xuất: trình duyệt đó không còn tạo/xem QR Cloud. USB tiếp tục không cần đăng nhập.
-
-Tạo mới/đóng phòng ngắt phòng cũ qua LiveKit và thay/xóa bản ghi liên kết. JWT đã phát có thể còn hiệu lực đến hạn; đây không phải cơ chế thu hồi JWT tức thời.
-
-## Kiểm chứng trong bản sửa
-
-Đã chạy test bằng PostgreSQL nhúng PGlite cho schema, quyền sở hữu phòng, hash/expiry phiên đăng nhập, state/nonce/PKCE OAuth, đăng xuất và hết hạn QR. Google token exchange/signature verification được giả lập tại ranh giới thư viện trong test; chưa phải lần đăng nhập Google thật. Chưa kiểm chứng Render Postgres hoặc LiveKit Cloud sau triển khai khi chưa có cấu hình ngoài.
-
-Tài liệu gốc: https://developers.google.com/identity/openid-connect/openid-connect
+Tài liệu chính thức: [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect), [MongoDB TTL](https://www.mongodb.com/docs/manual/core/index-ttl/).

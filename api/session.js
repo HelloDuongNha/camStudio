@@ -1,74 +1,69 @@
-import crypto from 'node:crypto';
-import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { currentUser, sameOrigin, json } from '../lib/auth.js';
 import { getStore } from '../lib/database.js';
+import { createPairing, ownerPairing, mediaToken, removeMediaRoom, receiverPresent } from '../lib/rooms.js';
+import { cachedPresence, rateLimit } from '../lib/cache.js';
+import { readJson } from '../lib/http.js';
 
-const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const randomRoom = () => Array.from({ length: 6 }, () => ROOM_ALPHABET[crypto.randomInt(ROOM_ALPHABET.length)]).join('');
-
-async function tokenFor(apiKey, apiSecret, room, identity, canPublish, seconds) {
-  const token = new AccessToken(apiKey, apiSecret, { identity, ttl: seconds });
-  token.addGrant({ roomJoin: true, room, canPublish, canSubscribe: true });
-  return token.toJwt();
-}
-
-async function removeRoom(url, key, secret, room) {
-  try {
-    await new RoomServiceClient(url.replace(/^wss:/, 'https:'), key, secret).deleteRoom(room);
-  } catch (error) {
-    if (error.code !== 'not_found' && error.status !== 404) throw error;
-  }
-}
-
-export function createSessionHandler({ store = getStore, user = currentUser, remove = removeRoom } = {}) {
+export function createSessionHandler({ store = getStore, user = currentUser, remove = removeMediaRoom, present = receiverPresent } = {}) {
   return async function handler(request, response) {
-    if (!['GET', 'POST', 'DELETE'].includes(request.method)) {
-      response.setHeader('Allow', 'GET, POST, DELETE');
-      return json(response, 405, { error: 'method_not_allowed' });
-    }
+    if (!['GET', 'POST', 'DELETE'].includes(request.method)) return json(response, 405, { error: 'method_not_allowed' });
     try {
       if (request.method !== 'GET' && !sameOrigin(request)) return json(response, 403, { error: 'origin_denied' });
-      const db = store();
-      const account = await user(request, db);
+      const db = store(), account = await user(request, db);
       if (!account) return json(response, 401, { error: 'login_required' });
-      const livekitUrl = process.env.LIVEKIT_URL;
-      const apiKey = process.env.LIVEKIT_API_KEY, apiSecret = process.env.LIVEKIT_API_SECRET;
-      let allowedUrl = false;
-      try { const url = new URL(livekitUrl); allowedUrl = url.protocol === 'wss:' && url.hostname.endsWith('.livekit.cloud'); } catch {}
-      if (!allowedUrl || !apiKey || !apiSecret) return json(response, 503, { error: 'livekit_not_configured' });
-      let pairing = await db.pairing(account.id);
-      if (request.method === 'DELETE') {
-        if (pairing) await remove(livekitUrl, apiKey, apiSecret, pairing.room);
-        await db.deletePairing(account.id);
-        return json(response, 200, { ok: true });
-      }
-      if (request.method === 'GET' && !pairing) return json(response, 404, { error: 'no_active_pairing' });
-      if (request.method === 'POST') {
-        if (pairing) await remove(livekitUrl, apiKey, apiSecret, pairing.room);
-        for (let attempt = 0; attempt < 5; attempt++) {
-          pairing = { room: randomRoom(), expires_at: new Date(Date.now() + 3600000) };
-          try {
-            await db.savePairing(account.id, pairing.room, pairing.expires_at);
-            break;
-          } catch (error) {
-            if (error.code !== '23505' || attempt === 4) throw error;
-          }
+      const query = new URL(request.url, 'http://localhost').searchParams;
+      if (request.method === 'GET') {
+        const pairing = await db.pairing(account.id);
+        if (!pairing) return json(response, 404, { error: 'no_active_pairing' });
+        if (query.get('action') === 'status') {
+          const connected = pairing.state === 'connected' || await cachedPresence(pairing.revision, () => present(pairing));
+          if (connected && pairing.state !== 'connected') await db.markConnected(account.id, pairing.revision);
+          return json(response, 200, { revision: pairing.revision, connected, expires: Math.floor(pairing.expires_at.getTime() / 1000) });
         }
+        return json(response, 200, ownerPairing(pairing, account.id));
       }
-      const expires = Math.floor(new Date(pairing.expires_at).getTime() / 1000);
-      const seconds = expires - Math.floor(Date.now() / 1000);
-      if (seconds <= 0) return json(response, 404, { error: 'no_active_pairing' });
-      const [publisherToken, receiverToken] = await Promise.all([
-        tokenFor(apiKey, apiSecret, pairing.room, `studio-${account.id}`, true, seconds),
-        tokenFor(apiKey, apiSecret, pairing.room, `android-${crypto.randomUUID()}`, false, seconds),
-      ]);
-      return json(response, request.method === 'POST' ? 201 : 200, {
-        version: 2, transport: 'livekit', ownerId: account.id, room: pairing.room, expires, livekitUrl, publisherToken, receiverToken,
+      const input = await readJson(request);
+      if (request.method === 'POST' && !['create', 'replace', 'publisher', 'cancel'].includes(input.action)) {
+        return json(response, 400, { error: 'invalid_request' });
+      }
+      if (request.method === 'POST' && input.action === 'publisher') {
+        const pairing = await db.pairing(account.id);
+        if (!pairing || pairing.revision !== input.revision) return json(response, 409, { error: 'pairing_changed' });
+        return json(response, 200, await mediaToken(pairing, `publisher-${pairing.revision}`, true));
+      }
+      if (!await rateLimit(db, 'owner-room', account.id, 20)) return json(response, 429, { error: 'too_many_attempts' });
+      return await db.withOwnerLock(account.id, async () => {
+        let pairing = await db.ownedPairing(account.id);
+        if (request.method === 'DELETE' || input.action === 'cancel') {
+          if (!pairing || pairing.revision !== input.revision) return json(response, 200, { removed: false });
+          if (input.mode !== 'if-unconnected') return json(response, 400, { error: 'invalid_request' });
+          const connected = pairing.state === 'connected' || await cachedPresence(pairing.revision, () => present(pairing), true);
+          if (connected) { await db.markConnected(account.id, pairing.revision); return json(response, 200, { kept: true }); }
+          await db.markClosing(account.id, pairing.revision);
+          await remove(pairing);
+          await db.deletePairing(account.id, pairing.revision);
+          return json(response, 200, { removed: true });
+        }
+        if (pairing && pairing.state !== 'closing' && pairing.expires_at > new Date() && input.action !== 'replace') {
+          return json(response, 200, ownerPairing(pairing, account.id));
+        }
+        if (input.action === 'replace' && pairing && input.revision !== pairing.revision) return json(response, 409, { error: 'pairing_changed' });
+        if (pairing) {
+          // Revoke DB credentials before disconnecting the private LiveKit room.
+          await db.markClosing(account.id, pairing.revision);
+          await remove(pairing);
+          await db.deletePairing(account.id, pairing.revision);
+        }
+        for (let attempt = 0; attempt < 10; attempt++) {
+          pairing = await createPairing();
+          try { await db.insertPairing(account.id, pairing); break; }
+          catch (error) { if (error.code !== 11000 || attempt === 9) throw error; }
+        }
+        return json(response, 201, ownerPairing(pairing, account.id));
       });
-    } catch {
-      return json(response, 503, { error: 'session_service_unavailable' });
+    } catch (error) {
+      return json(response, error.status || 503, { error: error.status ? error.message : 'session_service_unavailable' });
     }
   };
 }
-
 export default createSessionHandler();

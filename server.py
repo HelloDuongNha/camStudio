@@ -230,6 +230,7 @@ class Handler(SimpleHTTPRequestHandler):
                     published_at = session.get("publishedAt", 0)
                 self.send_json(HTTPStatus.OK, {
                     "room": room,
+                    "connected": bool(session.get("receiverConnected")),
                     "hasFrame": frame is not None,
                     "frameAgeMs": max(0, int((time.time() - published_at) * 1000)) if frame else None,
                 })
@@ -237,6 +238,7 @@ class Handler(SimpleHTTPRequestHandler):
             if action == "frame":
                 after = int(query.get("after", ["-1"])[0])
                 with LOCK:
+                    session["receiverConnected"] = True
                     frame = session.get("frame")
                     sequence = session.get("sequence", 0)
                 if frame is None or sequence <= after:
@@ -257,6 +259,26 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        close_match = re.fullmatch(r"/api/rooms/([A-HJ-NP-Z2-9]{6})/close", parsed.path)
+        if close_match:
+            body = self.read_body(2048)
+            try:
+                value = json.loads(body or b"")
+                token = value.get("token")
+            except (ValueError, TypeError):
+                self.send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_body"})
+                return
+            room = close_match.group(1)
+            session = self.authenticated_session(room, token)
+            if not session:
+                self.send_json(HTTPStatus.OK, {"removed": False})
+                return
+            with LOCK:
+                kept = bool(session.get("receiverConnected"))
+                if not kept and SESSIONS.get(room) is session:
+                    del SESSIONS[room]
+            self.send_json(HTTPStatus.OK, {"kept": kept, "removed": not kept})
+            return
         if parsed.path == "/api/sessions":
             body = self.read_body(16 * 1024)
             if body is None:
@@ -276,6 +298,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             with LOCK:
                 previous = SESSIONS.get(room)
+                if previous and previous.get("token") != token and previous.get("expires", 0) > int(time.time()):
+                    self.send_json(HTTPStatus.CONFLICT, {"error": "room_exists"})
+                    return
                 if previous and previous.get("token") == token:
                     session = previous
                     session["expires"] = expires
