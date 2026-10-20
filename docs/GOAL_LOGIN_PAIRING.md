@@ -1,37 +1,27 @@
 # Goal: tài khoản, MongoDB và ghép nối gọn cho Cam Studio
 
-## Yêu cầu đã chốt
+## Yêu cầu
 
-- Login/signup Google trước Studio, logout bên trong; mọi tài khoản Google được đăng ký.
-- MongoDB Atlas, phòng theo chủ sở hữu; mã riêng/password tự tạo, chống trùng/giành phòng/lộ JWT trong QR.
-- Tạo mã tự mở và phát camera/microphone; không có nút phát thứ hai.
-- Đóng modal hủy phiên chưa có thiết bị kết nối; đã kết nối thì giữ. Tạo mới loại bỏ mã cũ.
-- Link chỉ hiển thị gọn, sao chép đúng chỗ; nút tạo mới nổi bật.
-- Bỏ nguồn thư viện điện thoại rỗng, crop/rotate/zoom/reset, quyền camera/mic demo, component/design-system demo trên web.
-- Redis cho rate limits/presence, MongoDB giữ quyền và trạng thái thật. Giữ camera hook/nguồn local Android hiện có.
+Google login/signup trước Studio, logout; mọi tài khoản Google được đăng ký. MongoDB Atlas quản lý tài khoản/phòng theo chủ sở hữu, mã duy nhất và mật khẩu tự tạo; thay mã loại bỏ phòng cũ. Tạo mã tự mở nguồn, đóng modal hủy phòng chưa kết nối và giữ phòng đã kết nối. Giao diện gọn theo yêu cầu; giữ camera hook Android hiện có. Redis chỉ dùng cho rate limits/presence khi có cấu hình.
 
-## Hoàn thành ở mã và kiểm thử cục bộ
+## Đã triển khai và xác minh ngày 20/10/2026
 
-- Trang login/signup và server gate, logout; không hỏi access key.
-- MongoDB driver/collections/indexes thay PostgreSQL, unique codes và khóa thao tác theo tài khoản.
-- Password hash/encryption, credential receiver có thể thu hồi, JWT media ngắn hạn, mã media riêng.
-- Vòng đời modal/create/replace/cancel, khóa request trùng và loại kết quả trả muộn.
-- Giao diện đã dọn; có ảnh UI QA dùng video/tài khoản giả lập.
-- Redis đã kiểm thử bằng redis-server thật cục bộ; fallback MongoDB khi Redis ngắt.
-- Android nhận QR v3/mã/password và đổi lease qua HTTPS trước khi nối LiveKit. Build cả hai flavor, harness, unit tests và lint đều đạt sau chỉnh sửa cuối.
-- Browser APK đã nhúng module mới, xác minh hash trùng module standalone; giữ nguyên origin APK và chứng thư LSPatch 487. Artifact nằm trong `VirtualCamPoC/app/build/outputs/camstudio-account-pairing/`.
-- Kiểm thử cuối: 47/47 bài Node, 7/7 bài USB HTTP; kiểm tra cú pháp và `git diff --check` đạt.
-- Google OAuth Web client đã được người dùng tạo; JSON đã kiểm tra callback và nạp `.env` bị Git ignore.
-- Atlas: đã tạo project CamStudio và cluster Free ở Singapore. Đã quan sát database user do người dùng tạo, quyền `readWrite` trên database `camstudio`; chưa có URI trong `.env`.
-- Google Audience đã kiểm tra: External nhưng Testing; Publish bị khóa do Branding chưa đầy đủ. Đã chuẩn bị trang `/privacy` và link từ login trong mã, chưa triển khai.
-- Render CamPOC ở Singapore, Free; outbound IP hiện hiển thị `74.220.52.0/24`, `74.220.60.0/24`. Đã chuẩn bị form Atlas IP đầu tiên, chờ xác nhận mở quyền mạng; chưa thay đổi allowlist hoặc Render secrets.
-- Trang quyền riêng tư đã xem và kiểm tra bố cục trong trình duyệt cục bộ; chưa công bố online.
+- Web production: https://campoc.onrender.com. Các assets app.js/styles.css/login.html/login.js/privacy.html đã so sánh byte với nguồn sau deploy.
+- Google OAuth Web client riêng; Audience External/In production, Branding có trang chủ và quyền riêng tư. Không dùng email allowlist.
+- Atlas CamStudio Free, Singapore; database user readWrite trên camstudio. IP Access List gồm hai dải outbound Render đã được người dùng cho phép: 74.220.52.0/24, 74.220.60.0/24.
+- Render đã lưu Google OAuth, MongoDB URI, ROOM_SECRET_KEY, APP_ORIGIN, TRUST_PROXY_HOPS. URI đã sửa dấu bao mẫu và so sánh khớp .env mà không in bí mật. OAuth state và tài khoản đã ghi/đọc thành công qua Atlas từ Render.
+- Render build command `npm ci --omit=dev`, start `npm start`, health `/healthz`.
+- Chrome production: đăng nhập Google thật thành công, Studio hiển thị tài khoản và logout; tạo mã tự khởi động camera/microphone và nguồn sẵn sàng; tạo mới đổi code; đóng khi chưa có điện thoại dừng source và hủy phòng; logout về login, mở trực tiếp Studio bị buộc login.
+- Kiểm thử tự động 47 bài Node, 7 bài USB HTTP: phân quyền tài khoản, mã/password, lease, thay mã/hủy phòng, giữ phòng đã kết nối, CSRF, OAuth PKCE/state/nonce, Redis outage fallback và race UI.
+- Redis integration đã có và kiểm thử redis-server thật cục bộ; production chưa đặt REDIS_URL, đang dùng MongoDB fallback. Không tuyên bố Redis đã chạy cloud hoặc đã tăng FPS.
+- Android QR v3/code/password và lease HTTPS; build hai flavor/harness, unit tests/lint đạt. Browser APK nhúng module mới, hash khớp standalone, giữ origin và signer LSPatch 487.
+- APK và verification.json: `VirtualCamPoC/app/build/outputs/camstudio-account-pairing/`.
+- UI đã bỏ nguồn thư viện rỗng, crop/rotate/zoom/reset, permissions/component demos, nút start thứ hai/revoke; mã/password thật, QR/link gọn, nút đổi mã nổi bật.
 
-## Còn phải hoàn tất để đóng goal
+## Còn cần xác minh
 
-- Atlas URI và network allowlist, kiểm chứng kết nối thật.
-- Google Audience/Branding phù hợp public signup.
-- Render Environment, Redis triển khai nếu đủ cấu hình, cập nhật web và hash kiểm chứng.
-- Google login/room/QR thật sau deploy. ADB hiện không có thiết bị, không được ghi nhận đã test/cài trên điện thoại.
+- ADB hiện không có thiết bị: chưa cài APK mới, chưa quét QR/thử code/password trên điện thoại thật, chưa đo/phán đoán chất lượng camera hoặc FPS.
+- Giữ stream khi đóng modal sau kết nối thật và nhận stream sau đổi mã: đã có test tự động nhưng chưa có bằng chứng điện thoại thật.
+- Phân quyền nhiều tài khoản có Mongo integration test; production mới kiểm thử một tài khoản Google.
 
-Goal vẫn active cho đến khi công việc còn lại hoàn thành hoặc có blocker cần người dùng xử lý. Không tính test OAuth/media giả lập là đăng nhập Google hoặc kết nối điện thoại thật.
+Goal chưa hoàn tất cho đến khi kiểm thử thiết bị liên quan xong. Không tính OAuth/media giả lập là kết nối thực.

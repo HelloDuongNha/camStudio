@@ -3,7 +3,7 @@ services:
     name: cam-studio
     runtime: node
     plan: free
-    buildCommand: npm ci
+    buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /healthz
     envVars:
