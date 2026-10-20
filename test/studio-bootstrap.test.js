@@ -14,7 +14,7 @@ function source() {
   const tracks=[{kind:'video'},{kind:'audio'}].map((track)=>({...track,readyState:'live',stops:0,stop(){this.stops++;this.readyState='ended';},addEventListener(){},getSettings:()=>({width:1920,height:1080,frameRate:30,deviceId:''})}));
   return {tracks,getTracks:()=>tracks,getVideoTracks:()=>tracks.filter(t=>t.kind==='video'),getAudioTracks:()=>tracks.filter(t=>t.kind==='audio')};
 }
-function fixture({acquire,existing,connected=false,intercept}={}) {
+function fixture({acquire,existing,connected=false,intercept,transport='cloud',cameraPermission}={}) {
   const nodes=new Map(), classes=new Map(), events=new Map(), timers=new Map(), calls=[], redirects=[], streams=[], rooms=[];
   let nextTimer=0, saved=existing;
   for(const match of html.matchAll(/<([a-zA-Z][\w:-]*)\b([^>]*)>/g)) {
@@ -32,20 +32,23 @@ function fixture({acquire,existing,connected=false,intercept}={}) {
   nodes.get('outputResolution').value='portrait-source'; nodes.get('outputFps').value='30';
   const local=new Map(), sessionStorage=new Map();
   const storage=(map)=>({getItem:key=>map.get(key)??null,setItem:(key,value)=>map.set(key,value),removeItem:key=>map.delete(key)});
-  const location=new URL('https://studio.test/?transport=cloud');location.replace=(value)=>redirects.push(value);location.reload=()=>redirects.push('reload');
+  const location=new URL(`https://studio.test/?transport=${transport}`);location.replace=(value)=>redirects.push(value);location.reload=()=>redirects.push('reload');
   const context=vm.createContext({URL,URLSearchParams,AbortController,performance,Blob,btoa,crypto:webcrypto,location,Option:function(text,value){this.textContent=text;this.value=value;},
     document:{documentElement:{dataset:{}},querySelector(selector){return selector.startsWith('#')?nodes.get(selector.slice(1)):classes.get(selector.slice(1));},getElementById:id=>nodes.get(id)},
     localStorage:storage(local),sessionStorage:storage(sessionStorage),history:{replaceState(_a,_b,url){location.href=String(url);}},
-    navigator:{mediaDevices:{getUserMedia:async()=>{const value=acquire?await acquire():source();streams.push(value);return value;},enumerateDevices:async()=>[]},clipboard:{writeText:async()=>{}},sendBeacon(){}},
+    navigator:{permissions:cameraPermission?{query:async()=>({state:cameraPermission})}:undefined,mediaDevices:{getUserMedia:async()=>{const value=acquire?await acquire():source();streams.push(value);return value;},enumerateDevices:async()=>[]},clipboard:{writeText:async()=>{}},sendBeacon(){}},
     setTimeout(fn,ms){const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearTimeout(id){timers.delete(id);},
     setInterval(fn,ms){const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearInterval(id){timers.delete(id);},
     addEventListener:(name,fn)=>events.set(name,fn),qrcode:()=>({addData(value){this.value=value;},make(){},createSvgTag(){return '<svg>test QR</svg>';}}),
     LivekitClient:{RoomEvent:{ParticipantConnected:'participant',Reconnecting:'reconnecting',Reconnected:'reconnected',Disconnected:'disconnected'},Track:{Source:{Camera:'camera',Microphone:'microphone'}},
-      Room:class{constructor(){this.handlers=new Map();this.published=[];this.localParticipant={publishTrack:async(track)=>this.published.push(track)};rooms.push(this);}on(name,fn){this.handlers.set(name,fn);}async connect(){this.connected=true;}async disconnect(){this.connected=false;}}
+      Room:class{constructor(){this.handlers=new Map();this.published=[];this.localParticipant={publishTrack:async(track,options)=>{this.published.push(track);this.publishOptions||=[];this.publishOptions.push(options);}};rooms.push(this);}on(name,fn){this.handlers.set(name,fn);}async connect(){this.connected=true;}async disconnect(stopTracks=true){this.connected=false;this.stopTracks=stopTracks;}}
     },
     fetch:async(url,init={})=>{
       const data=init.body&&typeof init.body==='string'?JSON.parse(init.body):undefined;calls.push({url,method:init.method||'GET',data});
       const replacement=intercept?.(url,init,data);if(replacement)return await replacement;
+      if(url==='http://127.0.0.1:4173/api/info')return ok({transport:'lan-jpeg-v1'});
+      if(url==='http://127.0.0.1:4173/api/sessions')return ok({pairCode:'ABCD-EFGH'});
+      if(url.includes('/frame?'))return ok({});
       if(url.startsWith('/api/auth?route=me'))return ok({configured:true,user});
       if(url.includes('route=logout'))return ok({ok:true});
       if(url.includes('action=status'))return ok({revision:saved?.revision,connected});
@@ -73,10 +76,11 @@ test('rapid duplicate create requests do not duplicate capture or create rooms t
   const opening=f.run('openPairing()');assert.equal(await f.run('openPairing()'),false);resolve(source());await opening;
   assert.equal(f.streams.length,1);assert.equal(f.calls.filter(c=>c.data?.action==='create').length,1);
 });
-test('closing unused modal removes matching revision and releases every track',async()=>{
+test('closing unused modal revokes room while retaining independent preview',async()=>{
   const f=fixture();await f.settle();await f.run('openPairing()');await f.run('closePairing()');
   assert.equal(f.nodes.get('pairingDialog').open,false);assert.equal(f.run('session'),undefined);
-  assert.ok(f.streams[0].tracks.every(track=>track.readyState==='ended'));
+  assert.ok(f.streams[0].tracks.every(track=>track.readyState==='live'));
+  assert.equal(f.rooms[0].stopTracks,false);
   assert.equal(f.calls.find(c=>c.method==='DELETE').data.revision,'revision-one');
 });
 test('closing a connected modal keeps media and the room running',async()=>{
@@ -106,4 +110,25 @@ test('restoring saved pairing never opens the source before user action',async()
 test('logout closes media and sends the user to login',async()=>{
   const f=fixture();await f.settle();await f.run('openPairing()');await f.nodes.get('logoutButton').events.get('click')();
   assert.ok(f.streams[0].tracks.every(track=>track.readyState==='ended'));assert.equal(f.redirects.at(-1),'/login');
+});
+
+test('preview opens before pairing and never creates or publishes a room',async()=>{
+  const f=fixture();await f.settle();assert.equal(await f.run('startPreview()'),true);
+  assert.equal(f.streams.length,1);assert.equal(f.rooms.length,0);assert.equal(f.nodes.get('pairingDialog').open,false);
+  assert.equal(f.calls.some(c=>c.data?.action==='create'),false);
+  await f.run('openPairing()');assert.equal(f.streams.length,1);
+});
+test('previously granted camera permission automatically opens preview without pairing',async()=>{
+  const f=fixture({cameraPermission:'granted'});await f.settle();await f.settle();
+  assert.equal(f.streams.length,1);assert.equal(f.rooms.length,0);assert.equal(f.nodes.get('pairingDialog').open,false);
+});
+test('USB startup connects directly without QR or modal',async()=>{
+  const f=fixture({transport:'usb'});await f.settle();await f.settle();
+  assert.equal(f.streams.length,1);assert.equal(f.nodes.get('pairingDialog').open,false);
+  assert.equal(f.nodes.get('qrCode').innerHTML,'');assert.equal(f.calls.filter(c=>c.url.endsWith('/api/sessions')).length,1);
+});
+test('Cloud publishes one full resolution encoding with explicit bitrate and framerate',async()=>{
+  const f=fixture();await f.settle();await f.run('openPairing()');
+  const options=f.rooms[0].publishOptions[0];assert.equal(options.simulcast,false);assert.equal(options.videoCodec,'h264');
+  assert.ok(options.videoEncoding.maxBitrate>=6000000);assert.equal(options.videoEncoding.maxFramerate,30);
 });

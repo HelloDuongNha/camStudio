@@ -9,9 +9,10 @@ const outputResolution = $('#outputResolution'), outputFps = $('#outputFps');
 const videoDevice = $('#videoDevice'), audioDevice = $('#audioDevice');
 let isUsbMode = runtime.selectedTransport(location.search, localStore.getItem('camstudio-transport-v1')) === 'usb';
 let account, activeStream, liveKitRoom, canvasStream, session;
-let previewTimer, statusTimer, expiryTimer, snackbarTimer;
+let previewTimer, statusTimer, qualityTimer, expiryTimer, snackbarTimer;
 let generation = 0, opening = false, closing = false, publishTask, relayRunning = false;
-let sourceFrameRate = 30;
+let sourceFrameRate = 30, previewFrameCallback;
+let previewOpening = false;
 const actualFps = () => Math.min(Number(outputFps.value) || 30, sourceFrameRate || 30);
 
 function showSnackbar(text) {
@@ -44,10 +45,13 @@ function updateTransport() {
   $('#audioField').hidden = isUsbMode;
   $('#transportHint').textContent = isUsbMode ? 'USB trực tiếp. Mở dịch vụ USB trên máy tính và cắm điện thoại.' : 'Cloud phát hình và tiếng qua LiveKit.';
   $('#passwordCard').hidden = isUsbMode;
+  $('#pairButton').textContent = isUsbMode ? 'Kết nối USB' : 'Tạo mã ghép nối ↗';
+  $('#connectHint').textContent = isUsbMode ? 'Cắm cáp và mở CamPOC. USB tự ghép nối, không cần QR hay mật khẩu.' : 'Xem trước nguồn rồi tạo mã Cloud. Đóng mã không tắt nguồn xem trước.';
   localStore.setItem('camstudio-transport-v1', isUsbMode ? 'usb' : 'cloud');
   const url = new URL(location.href); url.searchParams.set('transport', isUsbMode ? 'usb' : 'cloud'); history.replaceState(null, '', url);
 }
 function busy(value) {
+  $('#previewButton').disabled = value;
   $('#pairButton').disabled = value; $('#newPairing').disabled = value; $('#restartSource').disabled = value;
   $('#computerSource').disabled = value; $('#nearSource').disabled = value;
   for (const selector of ['#copyCode', '#copyPassword', '#copyPairing']) $(selector).disabled = value;
@@ -57,14 +61,18 @@ function hasSource() { return activeStream?.getVideoTracks().some((track) => tra
 function stopPublishing() {
   relayRunning = false;
   clearInterval(statusTimer); statusTimer = undefined;
+  clearInterval(qualityTimer); qualityTimer = undefined;
   runtime.stopStream(canvasStream); canvasStream = undefined;
   const room = liveKitRoom; liveKitRoom = undefined;
-  if (room) void room.disconnect().catch(() => {});
+  if (room) void room.disconnect(false).catch(() => {});
 }
 function stopSource() {
   generation++;
   stopPublishing();
   clearInterval(previewTimer); previewTimer = undefined;
+  if (previewFrameCallback !== undefined) videoPreview.cancelVideoFrameCallback?.(previewFrameCallback);
+  previewFrameCallback = undefined;
+  $('#previewButton').hidden = false;
   runtime.stopStream(activeStream); activeStream = undefined;
   videoPreview.srcObject = null; relayCanvas.hidden = true;
   $('.preview-empty').hidden = false; $('#restartSource').hidden = true;
@@ -91,7 +99,17 @@ function configureCanvas(track) {
   $('#previewStage').classList.toggle('landscape', relayCanvas.width >= relayCanvas.height);
   $('#previewStage').style.aspectRatio = `${relayCanvas.width} / ${relayCanvas.height}`;
   $('#previewResolution').textContent = `${width}×${height} → ${relayCanvas.width}×${relayCanvas.height}`;
-  drawRelayFrame(); clearInterval(previewTimer); previewTimer = setInterval(drawRelayFrame, 1000 / actualFps());
+  drawRelayFrame(); clearInterval(previewTimer);
+  if (previewFrameCallback !== undefined) videoPreview.cancelVideoFrameCallback?.(previewFrameCallback);
+  if (videoPreview.requestVideoFrameCallback) {
+    let lastDraw = 0;
+    const drawNext = (now) => {
+      if (!hasSource()) return;
+      if (now - lastDraw >= 1000 / actualFps() - 2) { drawRelayFrame(); lastDraw = now; }
+      previewFrameCallback = videoPreview.requestVideoFrameCallback(drawNext);
+    };
+    previewFrameCallback = videoPreview.requestVideoFrameCallback(drawNext);
+  } else previewTimer = setInterval(drawRelayFrame, 1000 / actualFps());
 }
 async function populateDevices(videoId = '', audioId = '') {
   const devices = await navigator.mediaDevices.enumerateDevices();
@@ -125,7 +143,7 @@ async function ensureSource(run) {
   videoPreview.srcObject = next; await videoPreview.play();
   if (run !== generation) { runtime.stopStream(next); throw new Error('cancelled'); }
   configureCanvas(next.getVideoTracks()[0]); relayCanvas.hidden = false; $('.preview-empty').hidden = true;
-  $('#restartSource').hidden = false;
+  $('#restartSource').hidden = false; $('#previewButton').hidden = true;
   await populateDevices(next.getVideoTracks()[0]?.getSettings().deviceId || videoId, next.getAudioTracks()[0]?.getSettings().deviceId || audioId);
 }
 function invitation(value) {
@@ -141,7 +159,7 @@ function renderPairing(value) {
     : 'Cắm điện thoại qua USB và chọn nguồn USB trong CamPOC. Có thể quét QR bằng chính điện thoại đang cắm cáp.';
   const qr = qrcode(0, 'M'); qr.addData(invitation(value), 'Byte'); qr.make();
   $('#qrCode').innerHTML = qr.createSvgTag({ cellSize: 5, margin: 0, scalable: true });
-  $('#pairButton').textContent = 'Mở mã ghép nối ↗';
+  $('#pairButton').textContent = value.transport === 'livekit' ? 'Mở mã ghép nối ↗' : 'USB đang chạy';
   $('#sessionBadge').textContent = value.connected ? 'Thiết bị đã kết nối' : `Phòng ${value.code || value.room}`;
   clearInterval(expiryTimer);
   const tick = () => {
@@ -171,7 +189,7 @@ async function publishCloud(value, run) {
   const credentials = await jsonRequest('/api/session', 'POST', { action: 'publisher', revision: value.revision });
   if (run !== generation) return;
   const sdk = window.LivekitClient;
-  const room = new sdk.Room({ adaptiveStream: true, dynacast: true, disconnectOnPageLeave: true });
+  const room = new sdk.Room({ adaptiveStream: false, dynacast: false, disconnectOnPageLeave: true });
   liveKitRoom = room;
   room.on(sdk.RoomEvent.ParticipantConnected, () => { if (run === generation) void pollStatus(value, run); });
   room.on(sdk.RoomEvent.Reconnecting, () => { if (run === generation) $('#relayStatus').textContent = 'Mạng gián đoạn · đang kết nối lại…'; });
@@ -181,7 +199,37 @@ async function publishCloud(value, run) {
   if (run !== generation) { await room.disconnect(); return; }
   canvasStream = relayCanvas.captureStream(actualFps());
   const video = canvasStream.getVideoTracks()[0], audio = activeStream?.getAudioTracks()[0];
-  if (video) await room.localParticipant.publishTrack(video, { source: sdk.Track.Source.Camera, simulcast: true });
+  if (video) {
+    video.contentHint = 'motion';
+    const publication = await room.localParticipant.publishTrack(video, {
+      source: sdk.Track.Source.Camera, simulcast: false, videoCodec: 'h264',
+      videoEncoding: { maxBitrate: Math.min(12000000, Math.max(2500000, Math.round(relayCanvas.width * relayCanvas.height * actualFps() * .10))), maxFramerate: actualFps() },
+      degradationPreference: 'balanced',
+    });
+    const sender = publication?.track?.sender;
+    if (sender?.getStats && run === generation) {
+      let previous, reading = false;
+      qualityTimer = setInterval(async () => {
+        if (reading || run !== generation) return;
+        reading = true;
+        try {
+          const stats = await sender.getStats();
+          if (run !== generation) return;
+          stats.forEach((report) => {
+            if (report.type !== 'outbound-rtp' || report.kind !== 'video' || report.isRemote) return;
+            const elapsed = previous ? (report.timestamp - previous.timestamp) / 1000 : 0;
+            if (elapsed > 0 && report.framesEncoded >= previous.framesEncoded) {
+              const fps = (report.framesEncoded - previous.framesEncoded) / elapsed;
+              const mbps = (report.bytesSent - previous.bytesSent) * 8 / elapsed / 1000000;
+              $('#relayStatus').textContent = `Cloud · ${report.frameWidth || relayCanvas.width}×${report.frameHeight || relayCanvas.height} · ${fps.toFixed(0)} fps · ${mbps.toFixed(1)} Mb/s`;
+            }
+            previous = report;
+          });
+        } catch { /* A missing stats sample must not interrupt video. */ }
+        finally { reading = false; }
+      }, 2000);
+    }
+  }
   if (audio && run === generation) await room.localParticipant.publishTrack(audio, { source: sdk.Track.Source.Microphone });
   if (run !== generation) { await room.disconnect(); return; }
   relayRunning = true; $('#relayStatus').textContent = 'Đang phát qua Cloud';
@@ -245,10 +293,10 @@ function errorMessage(error) {
     : isUsbMode ? 'Chưa nối được USB. Kiểm tra dịch vụ USB và quyền truy cập mạng cục bộ.' : 'Chưa mở được nguồn hoặc phòng Cloud. Hãy thử lại.';
 }
 async function openPairing(replace = false, restart = false) {
-  if (opening || closing || !account) return false;
+  if (opening || closing || previewOpening || !account) return false;
   opening = true; busy(true);
   const run = ++generation;
-  if (!dialog.open) dialog.showModal();
+  if (!isUsbMode && !dialog.open) dialog.showModal();
   $('#pairingConnection').textContent = 'Đang chuẩn bị nguồn…';
   let obtained;
   try {
@@ -259,7 +307,9 @@ async function openPairing(replace = false, restart = false) {
     obtained = isUsbMode ? await usbSession(replace) : await jsonRequest('/api/session', 'POST', { action: replace ? 'replace' : 'create', revision: session?.revision });
     if (obtained.transport === 'livekit' && obtained.ownerId !== account.id) throw new Error('login_required');
     if (run !== generation) { await cancelUnused(obtained); return false; }
-    session = obtained; renderPairing(session);
+    session = obtained;
+    if (!isUsbMode) renderPairing(session);
+    else { $('#pairButton').textContent = 'USB đang chạy'; $('#sessionBadge').textContent = 'USB · chờ điện thoại'; }
     if (isUsbMode) { publishTask = publishUsb(session, run); }
     else { publishTask = publishCloud(session, run); await publishTask; }
     return true;
@@ -267,7 +317,8 @@ async function openPairing(replace = false, restart = false) {
     if (error.message === 'login_required') location.replace('/login');
     if (error.message !== 'cancelled' && run === generation) { showSnackbar(errorMessage(error)); $('#pairingConnection').textContent = errorMessage(error); }
     if (run === generation) {
-      stopSource();
+      stopPublishing();
+      if (hasSource()) $('#relayStatus').textContent = 'Đang xem trước · chưa phát';
       if (obtained) { try { const outcome = await cancelUnused(obtained); if (!outcome.kept) session = undefined; } catch {} }
     }
     return false;
@@ -280,15 +331,29 @@ async function closePairing() {
   try {
     const value = session;
     const result = value ? await cancelUnused(value) : { removed: true };
-    if (!result.kept) { stopSource(); session = undefined; clearInterval(expiryTimer); $('#pairButton').textContent = 'Tạo mã ghép nối ↗'; $('#sessionBadge').textContent = 'Chưa kết nối'; }
+    if (!result.kept) { stopPublishing(); session = undefined; clearInterval(expiryTimer); $('#pairButton').textContent = isUsbMode ? 'Kết nối USB' : 'Tạo mã ghép nối ↗'; $('#sessionBadge').textContent = 'Chưa kết nối'; if (hasSource()) $('#relayStatus').textContent = 'Đang xem trước · chưa phát'; }
     else setConnection(true);
     dialog.close();
   } catch { showSnackbar('Chưa xác nhận được trạng thái phòng. Hãy thử đóng lại.'); }
   finally { closing = false; $('#closePairing').disabled = false; }
 }
+async function startPreview(restart = false) {
+  if (opening || closing || previewOpening || !account) return false;
+  if (session && restart) return openPairing(false, true);
+  previewOpening = true; busy(true);
+  const run = ++generation;
+  try {
+    if (restart) { stopSource(); }
+    await ensureSource(restart ? generation : run);
+    $('#relayStatus').textContent = 'Đang xem trước · chưa phát';
+    return true;
+  } catch (error) { if (error.message !== 'cancelled') showSnackbar(errorMessage(error)); return false; }
+  finally { previewOpening = false; busy(false); }
+}
+$('#previewButton').addEventListener('click', () => { void startPreview(); });
 $('#pairButton').addEventListener('click', () => { void openPairing(); });
 $('#newPairing').addEventListener('click', () => { void openPairing(true); });
-$('#restartSource').addEventListener('click', () => { void openPairing(false, true); });
+$('#restartSource').addEventListener('click', () => { void startPreview(true); });
 $('#closePairing').addEventListener('click', () => { void closePairing(); });
 dialog.addEventListener('cancel', (event) => { event.preventDefault(); void closePairing(); });
 dialog.addEventListener('click', (event) => { if (event.target === dialog) { const r = dialog.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) void closePairing(); } });
@@ -304,7 +369,9 @@ for (const [selector, usb] of [['#computerSource', false], ['#nearSource', true]
     if (opening || closing || isUsbMode === usb) return;
     if (session) { try { await cancelUnused(session); } catch { showSnackbar('Chưa đổi được đường truyền. Hãy thử lại.'); return; } }
     stopSource(); session = undefined; clearInterval(expiryTimer); isUsbMode = usb; updateTransport();
-    $('#pairButton').textContent = 'Tạo mã ghép nối ↗'; $('#sessionBadge').textContent = 'Chưa kết nối';
+    if (dialog.open) dialog.close();
+    $('#pairButton').textContent = usb ? 'Kết nối USB' : 'Tạo mã ghép nối ↗'; $('#sessionBadge').textContent = 'Chưa kết nối';
+    if (usb) await openPairing(); else await startPreview();
   });
 }
 for (const control of [outputResolution, outputFps, videoDevice, audioDevice]) control.addEventListener('change', () => { if (hasSource()) showSnackbar('Bấm Đổi / khởi động lại nguồn để áp dụng thay đổi.'); });
@@ -334,6 +401,11 @@ void (async () => {
     if (!isUsbMode) {
       const restored = await request('/api/session');
       if (restored.ok) { session = await restored.json(); renderPairing(session); }
+    }
+    if (isUsbMode) void openPairing();
+    else if (navigator.permissions?.query) {
+      // Reopen the preview automatically only when the user already granted camera access.
+      try { if ((await navigator.permissions.query({ name: 'camera' })).state === 'granted') void startPreview(); } catch {}
     }
   } catch { busy(true); showSnackbar('Chưa kiểm tra được tài khoản. Vui lòng tải lại trang.'); }
 })();

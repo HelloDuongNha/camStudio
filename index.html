@@ -2,7 +2,7 @@
 <html lang="vi" data-theme="dark">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111116">
-  <title>Cam Studio</title><link rel="stylesheet" href="styles.css?v=studio-accounts-16">
+  <title>Cam Studio</title><link rel="stylesheet" href="styles.css?v=studio-preview-17">
 </head>
 <body>
   <aside id="studioRecovery" role="alert" hidden><strong>Studio gặp lỗi tải giao diện.</strong><p>Tải lại để thử lại; nguồn đang mở sẽ dừng.</p><button id="studioReload">Tải lại</button><button id="studioCopyHealth">Sao chép mốc lỗi</button><button id="studioDismiss">Đóng</button><p id="studioHealthStatus"></p></aside>
@@ -13,8 +13,8 @@
     <div class="studio-title"><div><p class="eyebrow">CAMERA & OBS</p><h1>Studio của bạn</h1><p>Chọn nguồn, tạo mã và kết nối với điện thoại.</p></div><span class="status-chip" id="sessionBadge">Chưa kết nối</span></div>
     <div class="workspace-grid">
       <section class="card preview-card" aria-labelledby="previewTitle"><div class="card-heading"><h2 id="previewTitle">Khung hình đầu ra</h2><span class="muted" id="previewResolution">Chưa có nguồn</span></div>
-        <div class="preview-stage" id="previewStage"><video id="sourcePreview" autoplay muted playsinline hidden></video><canvas id="relayCanvas" width="1080" height="1920" hidden></canvas><div class="preview-empty"><span class="empty-camera" aria-hidden="true">◉</span><strong>Nguồn hình sẽ xuất hiện ở đây</strong><p>Bấm Tạo mã ghép nối để mở camera hoặc OBS.</p></div></div>
-        <div class="preview-footer"><span class="live-dot" aria-hidden="true"></span><p id="relayStatus" role="status">Chưa phát dữ liệu</p><button class="button ghost" id="restartSource" hidden>Đổi / khởi động lại nguồn</button></div>
+        <div class="preview-stage" id="previewStage"><video id="sourcePreview" autoplay muted playsinline hidden></video><canvas id="relayCanvas" width="1080" height="1920" hidden></canvas><div class="preview-empty"><span class="empty-camera" aria-hidden="true">◉</span><strong>Nguồn hình sẽ xuất hiện ở đây</strong><p>Bấm Mở xem trước để chọn và kiểm tra camera hoặc OBS.</p></div></div>
+        <div class="preview-footer"><span class="live-dot" aria-hidden="true"></span><p id="relayStatus" role="status">Chưa mở nguồn</p><button class="button secondary" id="previewButton">Mở xem trước</button><button class="button ghost" id="restartSource" hidden>Đổi / khởi động lại nguồn</button></div>
       </section>
       <aside class="source-stack">
         <section class="card source-card"><p class="section-kicker">NGUỒN PHÁT</p><h2>Kết nối của bạn</h2>
@@ -23,7 +23,7 @@
             <div class="quality-controls"><label>Độ phân giải<select id="outputResolution"><option value="portrait-source">Dọc 1080 × 1920</option><option value="landscape-1080">Ngang 1920 × 1080</option><option value="source">Gốc camera / OBS</option></select></label><label>FPS<select id="outputFps"><option value="30">30 fps</option><option value="60">60 fps</option></select></label></div>
           </div><p class="transport-hint" id="transportHint">Cloud phát hình và tiếng qua LiveKit.</p>
         </section>
-        <section class="card connect-card"><p class="section-kicker">GHÉP NỐI THIẾT BỊ</p><h2>Sẵn sàng kết nối?</h2><p>Camera và micro sẽ mở khi bạn tạo mã. Chỉ chia sẻ mã với thiết bị của bạn.</p><button class="button primary full-width" id="pairButton">Tạo mã ghép nối <span aria-hidden="true">↗</span></button></section>
+        <section class="card connect-card"><p class="section-kicker">GHÉP NỐI THIẾT BỊ</p><h2>Sẵn sàng kết nối?</h2><p id="connectHint">Xem trước nguồn rồi tạo mã Cloud. Chỉ chia sẻ mã với thiết bị của bạn.</p><button class="button primary full-width" id="pairButton">Tạo mã ghép nối <span aria-hidden="true">↗</span></button></section>
       </aside>
     </div>
   </main>
@@ -41,6 +41,6 @@
     </div>
   </dialog>
   <div class="snackbar" id="snackbar" role="status" hidden><span id="snackbarText"></span><button id="snackbarAction" aria-label="Đóng thông báo">×</button></div>
-  <script src="studio-runtime.js?v=studio-accounts-16"></script><script src="vendor/qrcode.js"></script><script src="vendor/livekit-client.umd.js"></script><script src="app.js?v=studio-accounts-16"></script>
+  <script src="studio-runtime.js?v=studio-preview-17"></script><script src="vendor/qrcode.js"></script><script src="vendor/livekit-client.umd.js"></script><script src="app.js?v=studio-preview-17"></script>
 </body>
 </html>
