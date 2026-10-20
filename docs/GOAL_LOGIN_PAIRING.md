@@ -18,13 +18,9 @@ Google login/signup trước Studio, logout; mọi tài khoản Google được 
 - APK và verification.json: `VirtualCamPoC/app/build/outputs/camstudio-account-pairing/`.
 - UI đã bỏ nguồn thư viện rỗng, crop/rotate/zoom/reset, permissions/component demos, nút start thứ hai/revoke; mã/password thật, QR/link gọn, nút đổi mã nổi bật.
 
-## Còn cần xác minh
+## Kết quả kiểm chứng phát hành
 
-- ADB hiện không có thiết bị: chưa cài APK mới, chưa quét QR/thử code/password trên điện thoại thật, chưa đo/phán đoán chất lượng camera hoặc FPS.
-- Giữ stream khi đóng modal sau kết nối thật và nhận stream sau đổi mã: đã có test tự động nhưng chưa có bằng chứng điện thoại thật.
-- Phân quyền nhiều tài khoản có Mongo integration test; production mới kiểm thử một tài khoản Google.
-
-Goal chưa hoàn tất cho đến khi kiểm thử thiết bị liên quan xong. Không tính OAuth/media giả lập là kết nối thực.
+Các chức năng đã triển khai và kiểm thử; ma trận yêu cầu/bằng chứng và giới hạn ở [RELEASE_VERIFICATION.md](RELEASE_VERIFICATION.md). OPPO đã được cài hai APK mới; Browser qua Cloud hoàn tất bài 30 giây với 29,36 callback/s, qua USB 14,90 callback/s. Không suy ra độ trễ đầu cuối hay tương thích mọi profile từ các lượt đo này.
 
 ## Điều chỉnh theo phản hồi thiết bị ngày 20/10
 
@@ -34,3 +30,5 @@ Goal chưa hoàn tất cho đến khi kiểm thử thiết bị liên quan xong.
 - APK controller và Browser đã cài cập nhật thành công lên OPPO CPH2025. Deeplink payload cùng lời mời QR đã nhận thành công; chưa tính là kiểm thử camera scanner QR. Đóng modal sau điện thoại kết nối giữ stream được xác minh.
 - Browser nhận track LiveKit và Camera2 hook dùng network room mới, nhưng bài camera-check gặp timeout 15s ở một lần mở. Còn phải tái hiện và kiểm chứng output Browser với cấu hình mới.
 - 51 bài Node đạt sau thay đổi preview/USB/encoder. Các hướng dẫn cũ nói đóng modal dừng preview được thay thế bởi yêu cầu mới ở mục này.
+
+- Kiểm tra tiếp theo: relay cũ thiếu API mới đã được khởi động lại; chuyển USB sang Cloud thành công. Frontend tự đăng ký lại phiên sau relay restart, 52 tests đạt. Browser Cloud hoàn tất 881 callback/30s với nguồn 1080×1920; USB 447 callback/30s.
