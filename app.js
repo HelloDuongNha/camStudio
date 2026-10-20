@@ -247,6 +247,11 @@ async function publishUsb(value, run) {
       if (run !== generation || !blob) break;
       const response = await request(`${USB_ORIGIN}/api/rooms/${value.room}/frame?token=${encodeURIComponent(value.token)}`, { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
       await runtime.discardResponse(response);
+      if (response.status === 404 && run === generation) {
+        // The local relay may have restarted; restore this tab's unexpired session.
+        await jsonRequest(`${USB_ORIGIN}/api/sessions`, 'POST', { room: value.room, token: value.token, expires: value.expires });
+        continue;
+      }
       if (!response.ok) throw new Error('usb_publish_failed');
       consecutiveFailures = 0; frames++;
       if (performance.now() - measuredAt >= 1000) {

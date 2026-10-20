@@ -132,3 +132,11 @@ test('Cloud publishes one full resolution encoding with explicit bitrate and fra
   const options=f.rooms[0].publishOptions[0];assert.equal(options.simulcast,false);assert.equal(options.videoCodec,'h264');
   assert.ok(options.videoEncoding.maxBitrate>=6000000);assert.equal(options.videoEncoding.maxFramerate,30);
 });
+test('USB restores the same session after a relay restart without opening a modal',async()=>{
+  let firstFrame=true;
+  const f=fixture({transport:'usb',intercept(url){if(url.includes('/frame?')&&firstFrame){firstFrame=false;return ok({},404);}}});
+  await f.settle();await f.settle();
+  const registrations=f.calls.filter(c=>c.url.endsWith('/api/sessions'));
+  assert.equal(registrations.length,2);assert.equal(registrations[0].data.room,registrations[1].data.room);
+  assert.equal(registrations[0].data.token,registrations[1].data.token);assert.equal(f.nodes.get('pairingDialog').open,false);
+});
