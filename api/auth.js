@@ -57,10 +57,15 @@ export function createAuthHandler({ store = getStore, client = googleClient } = 
       return json(response, 405, { error: 'method_not_allowed' });
     } catch (error) {
       // Keep operational failures diagnosable without logging tokens, URIs or profiles.
+      const category = (failure) => ({
+        type: /^[A-Za-z0-9_]{1,80}$/.test(failure?.name || '') ? failure.name : 'Error',
+        code: Number.isInteger(failure?.code) || /^[A-Z_]{1,80}$/.test(failure?.code || '') ? failure.code : undefined,
+      });
       console.error(JSON.stringify({ event: 'account_service_error',
         route: ['me', 'login', 'callback', 'logout'].includes(route) ? route : 'unknown',
-        type: /^[A-Za-z0-9_]{1,80}$/.test(error?.name || '') ? error.name : 'Error',
-        code: Number.isInteger(error?.code) ? error.code : undefined }));
+        ...category(error), cause: error?.cause ? category(error.cause) : undefined,
+        servers: error?.reason?.servers ? Array.from(error.reason.servers.values(), server => server.error ?
+          { ...category(server.error), cause: server.error.cause ? category(server.error.cause) : undefined } : null) : undefined }));
       if (route === 'callback' || route === 'login') return redirect(response, '/login?error=failed');
       return json(response, 503, { error: 'account_service_unavailable' });
     }
