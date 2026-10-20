@@ -4,13 +4,13 @@ Studio phát camera/OBS từ máy tính tới CamPOC qua LiveKit Cloud hoặc re
 
 ## Hành vi ghép nối
 
-- Bấm **Tạo mã ghép nối** sẽ mở nguồn camera/microphone và bắt đầu phát. Không có nút phát thứ hai trong modal.
+- **Mở xem trước** mở nguồn độc lập với ghép nối. Nếu đã cấp quyền camera, Studio tự mở preview khi vào Cloud. **Tạo mã ghép nối** dùng lại nguồn đó và bắt đầu phát; không có nút phát thứ hai trong modal.
 - Cloud dùng mã phòng 6 ký tự và mật khẩu ngẫu nhiên 10 ký tự. QR/link ngắn chứa thông tin mời ghép nối; không chứa JWT LiveKit.
 - MongoDB giữ chủ sở hữu, mã duy nhất, phiên bản phòng, trạng thái và hạn dùng. Mật khẩu được hash bằng scrypt và mã hóa AES-GCM để chủ tài khoản mở lại QR. Không lưu video hoặc mật khẩu Google vào database.
 - Mỗi phòng cho một thiết bị nhận ghép nối. Cùng thiết bị có thể thử lại; các tiến trình preview/Browser trên thiết bị có thể nhận media độc lập qua credential riêng.
 - Tạo mã mới khóa mã/password/credential cũ trong database trước khi xóa phòng media cũ. Phòng media dùng ID riêng ngẫu nhiên, không trùng mã công khai. Lock theo tài khoản và unique indexes bảo vệ thao tác đồng thời.
-- Đóng modal khi chưa có thiết bị kết nối sẽ hủy phòng và dừng nguồn. Phòng đã kết nối được giữ khi đóng modal. Trạng thái kết nối Cloud được đối chiếu qua LiveKit, không chỉ dựa vào việc phát nguồn.
-- QR còn hạn được khôi phục theo tài khoản nhưng không tự mở camera khi tải trang. Thời hạn mặc định: đăng nhập 30 ngày, ghép nối 1 giờ.
+- Đóng modal khi chưa có thiết bị kết nối sẽ hủy phòng và dừng phát Cloud, nhưng giữ nguồn xem trước. Phòng đã kết nối được giữ khi đóng modal. Trạng thái kết nối Cloud được đối chiếu qua LiveKit, không chỉ dựa vào việc phát nguồn.
+- QR còn hạn được khôi phục theo tài khoản và tách khỏi nguồn preview. Thời hạn mặc định: đăng nhập 30 ngày, ghép nối 1 giờ.
 
 ## Máy chủ
 
@@ -58,7 +58,7 @@ Giao diện: `https://campoc.onrender.com/?transport=usb` (cũng yêu cầu đă
 ./install_usb_autostart.sh
 ```
 
-CamPOC nhận phiên qua ADB reverse. USB không dùng mật khẩu Cloud; mã/receiver token được quản lý bởi relay cục bộ. Modal USB đóng khi chưa có consumer sẽ hủy phiên; đã có consumer yêu cầu frame thì giữ. Mã trùng với token khác bị từ chối thay vì ghi đè. Cần cập nhật/chạy lại relay sau thay đổi `server.py`.
+CamPOC nhận phiên qua ADB reverse. USB không dùng mật khẩu Cloud; mã/receiver token được quản lý bởi relay cục bộ. Chọn USB tự mở nguồn, đăng ký relay và kết nối trực tiếp; không mở modal hoặc yêu cầu QR. Mã trùng với token khác bị từ chối thay vì ghi đè. Cần cập nhật/chạy lại relay sau thay đổi `server.py`.
 
 ## Android tương thích
 
@@ -90,3 +90,5 @@ Trang đo camera độc lập `/camera-check.html` và bảng `/camera-pattern.h
 ## Giới hạn thu hồi media
 
 Mã/password và lease cũ bị từ chối ngay sau khi database chuyển sang closing/xóa. JWT LiveKit được cấp ngắn tối đa 120 giây; server ngắt phòng cũ khi thay mã. JWT đã phát không thể được xem là thu hồi chữ ký tức thì, nhưng không cấp quyền vào phòng media mới và không còn được đổi lease cũ lấy JWT mới. Cần kết quả trên thiết bị thật trước khi khẳng định hành vi reconnect hoàn chỉnh.
+
+Cloud phát một luồng H.264, không dùng các lớp simulcast thấp cho đường nhận camera; bitrate tối đa tính theo số pixel/FPS (2,5–12 Mb/s), ưu tiên cân bằng độ nét/nhịp hình. Canvas vẽ theo callback frame camera khi trình duyệt hỗ trợ. Giao diện hiển thị độ phân giải, FPS và bitrate từ outbound WebRTC stats. Đây là số đo bên phát, không phải độ trễ đầu cuối.

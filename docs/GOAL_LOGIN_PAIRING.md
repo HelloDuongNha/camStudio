@@ -25,3 +25,12 @@ Google login/signup trước Studio, logout; mọi tài khoản Google được 
 - Phân quyền nhiều tài khoản có Mongo integration test; production mới kiểm thử một tài khoản Google.
 
 Goal chưa hoàn tất cho đến khi kiểm thử thiết bị liên quan xong. Không tính OAuth/media giả lập là kết nối thực.
+
+## Điều chỉnh theo phản hồi thiết bị ngày 20/10
+
+- Người dùng yêu cầu preview độc lập: tự mở nếu quyền camera đã granted, có nút Mở xem trước; hủy mã chưa kết nối chỉ dừng Cloud publish, giữ camera/microphone preview. Đã xác minh trạng thái `Đang xem trước · chưa phát` trên production sau hủy mã.
+- USB không QR/modal: chọn transport hoặc vào URL USB tự mở nguồn/relay; đã xác minh production không có dialog, web đo 29,4 fps và CamPOC nhận 1080×1920 qua USB.
+- Cloud: trước đổi cấu hình, log Browser có YUV mapping nguồn 180×320 (lớp thấp) lên output 640×480. Bản mới dùng H.264 một encoding, bitrate theo pixel/FPS, balanced, frame callbacks cho canvas. CamPOC thật lên 1080×1920 sau ramp-up; outbound stats tại một mẫu 26 fps/2,0 Mb/s. Chưa đo độ trễ đầu cuối hoặc so sánh frame động trước/sau, không tuyên bố hết lag.
+- APK controller và Browser đã cài cập nhật thành công lên OPPO CPH2025. Deeplink payload cùng lời mời QR đã nhận thành công; chưa tính là kiểm thử camera scanner QR. Đóng modal sau điện thoại kết nối giữ stream được xác minh.
+- Browser nhận track LiveKit và Camera2 hook dùng network room mới, nhưng bài camera-check gặp timeout 15s ở một lần mở. Còn phải tái hiện và kiểm chứng output Browser với cấu hình mới.
+- 51 bài Node đạt sau thay đổi preview/USB/encoder. Các hướng dẫn cũ nói đóng modal dừng preview được thay thế bởi yêu cầu mới ở mục này.
