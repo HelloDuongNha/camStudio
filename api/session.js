@@ -3,6 +3,45 @@ import { AccessToken } from 'livekit-server-sdk';
 
 const ROOM_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const SESSION_SECONDS = 60 * 60;
+const AUTH_SECONDS = 30 * 24 * 60 * 60;
+const AUTH_COOKIE = '__Host-camstudio-auth';
+
+function authSignature(payload, key) {
+  return crypto.createHmac('sha256', key).update(`camstudio-browser-v1:${payload}`).digest('base64url');
+}
+
+function hasBrowserSession(request, key) {
+  if (typeof key !== 'string' || key.length < 24) return false;
+  const cookie = (request.headers.cookie || '').split(';')
+    .map((part) => part.trim()).find((part) => part.startsWith(`${AUTH_COOKIE}=`));
+  if (!cookie) return false;
+  const value = cookie.slice(AUTH_COOKIE.length + 1);
+  const parts = value.split('.');
+  if (parts.length !== 3 || !/^\d+$/.test(parts[0]) || !/^[\w-]{32}$/.test(parts[1])) return false;
+  const expires = Number(parts[0]);
+  const now = Math.floor(Date.now() / 1000);
+  if (!Number.isSafeInteger(expires) || expires <= now || expires > now + AUTH_SECONDS) return false;
+  const expected = Buffer.from(authSignature(`${parts[0]}.${parts[1]}`, key));
+  const supplied = Buffer.from(parts[2]);
+  return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
+}
+
+function rememberBrowser(response, key) {
+  const expires = Math.floor(Date.now() / 1000) + AUTH_SECONDS;
+  const payload = `${expires}.${crypto.randomBytes(24).toString('base64url')}`;
+  response.setHeader('Set-Cookie', `${AUTH_COOKIE}=${payload}.${authSignature(payload, key)}; Path=/; Max-Age=${AUTH_SECONDS}; HttpOnly; Secure; SameSite=Strict`);
+}
+
+function isSameOrigin(request) {
+  if (request.headers['sec-fetch-site'] === 'cross-site') return false;
+  const origin = request.headers.origin;
+  if (!origin) return true; // Non-browser clients still need a valid access key.
+  try {
+    return new URL(origin).host === request.headers.host;
+  } catch {
+    return false;
+  }
+}
 
 function randomRoom() {
   const bytes = crypto.randomBytes(6);
@@ -44,7 +83,12 @@ export default async function handler(request, response) {
     return sendJson(response, 405, { error: 'method_not_allowed' });
   }
 
-  if (!hasValidAccessKey(request, process.env.CAMSTUDIO_ACCESS_KEY)) {
+  if (!isSameOrigin(request)) {
+    return sendJson(response, 403, { error: 'origin_denied' });
+  }
+  const accessKey = process.env.CAMSTUDIO_ACCESS_KEY;
+  const keyAccepted = hasValidAccessKey(request, accessKey);
+  if (!keyAccepted && !hasBrowserSession(request, accessKey)) {
     return sendJson(response, 401, { error: 'access_denied' });
   }
 
@@ -62,6 +106,7 @@ export default async function handler(request, response) {
       tokenFor(apiKey, apiSecret, room, `studio-${crypto.randomUUID()}`, true),
       tokenFor(apiKey, apiSecret, room, `android-${crypto.randomUUID()}`, false),
     ]);
+    if (keyAccepted) rememberBrowser(response, accessKey);
     return sendJson(response, 201, {
       version: 2,
       transport: 'livekit',

@@ -226,27 +226,27 @@ async function getRelayInfo() {
   return relayInfo;
 }
 
-function studioAccessKey() {
-  let value = sessionStore.getItem('camstudio-access-key') || '';
-  if (!value) {
-    value = window.prompt('Nhập khóa truy cập Cam Studio đã đặt trên dịch vụ triển khai')?.trim() || '';
-    if (value) sessionStore.setItem('camstudio-access-key', value);
-  }
-  return value;
-}
-
 async function createRemoteSession() {
-  const accessKey = studioAccessKey();
-  if (!accessKey) throw new Error('access_key_required');
-  const response = await fetchWithTimeout('/api/session', {
+  const requestSession = (accessKey) => fetchWithTimeout('/api/session', {
     method: 'POST',
-    headers: { 'X-CamStudio-Access-Key': accessKey },
+    credentials: 'same-origin',
+    headers: accessKey ? { 'X-CamStudio-Access-Key': accessKey } : {},
   }, 8000);
+  // Migrate keys retained by older tabs; new logins use an HttpOnly cookie.
+  let response = await requestSession(sessionStore.getItem('camstudio-access-key'));
   if (response.status === 401) {
     sessionStore.removeItem('camstudio-access-key');
-    throw new Error('access_denied');
+    await studioRuntime.discardResponse(response);
+    const accessKey = window.prompt('Xác thực Cam Studio một lần trên trình duyệt này. Tự ghi nhớ 30 ngày (cần cho phép cookie):')?.trim() || '';
+    if (!accessKey) throw new Error('access_key_required');
+    response = await requestSession(accessKey);
+    if (response.status === 401) {
+      await studioRuntime.discardResponse(response);
+      throw new Error('access_denied');
+    }
   }
   if (!response.ok) throw new Error('remote_session_failed');
+  sessionStore.removeItem('camstudio-access-key');
   const remote = await response.json();
   return {
     version: remote.version,

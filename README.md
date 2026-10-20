@@ -35,7 +35,7 @@ Khai báo bốn biến môi trường cho Production, Preview và Development r�
 - `LIVEKIT_API_SECRET`
 - `CAMSTUDIO_ACCESS_KEY` — chuỗi bí mật tự chọn, dài ít nhất 24 ký tự
 
-Ba giá trị LiveKit chỉ tồn tại ở Vercel Function và không được gửi xuống trình duyệt. Khi bấm **Tạo mã ghép nối** lần đầu trên Studio, nhập `CAMSTUDIO_ACCESS_KEY`; trình duyệt chỉ giữ khóa trong tab hiện tại. QR chứa token nhận có hạn một giờ, không chứa API secret.
+Ba giá trị LiveKit chỉ tồn tại ở máy chủ và không được gửi xuống trình duyệt. Với Cloud, nhập `CAMSTUDIO_ACCESS_KEY` một lần trên mỗi trình duyệt; máy chủ cấp cookie đăng nhập có hạn 30 ngày (`HttpOnly`, `Secure`, `SameSite=Strict`, cần HTTPS). Mở lại tab hoặc trình duyệt sẽ tự dùng cookie, không lưu khóa gốc trong localStorage/sessionStorage. Cần nhập lại khi hết hạn, xóa/chặn cookie, dùng trình duyệt khác hoặc máy chủ đổi khóa. Khóa lưu trong tab cũ được tự chuyển sang cookie sau lần tạo phiên thành công. USB không cần khóa Cloud. QR chứa token nhận có hạn một giờ, không chứa API secret. Không nhúng khóa truy cập vào mã web công khai.
 
 ## Luồng sử dụng
 

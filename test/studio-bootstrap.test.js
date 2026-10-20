@@ -48,7 +48,9 @@ function fixture({ query = '', deniedStorage = false, acquire } = {}) {
     matchMedia: () => ({ matches: false }), prompt: () => '', Option: function (text, value) { this.textContent = text; this.value = value; },
     setTimeout(fn, ms) { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; }, clearTimeout(id) { timers.delete(id); },
     setInterval(fn, ms) { const id = ++nextTimer; timers.set(id, { fn, ms }); return id; }, clearInterval(id) { timers.delete(id); },
-    addEventListener: (name, fn) => windowEvents.set(name, fn), fetch: async () => ({ ok: true, json: async () => ({ transport: 'livekit-v2' }) }),
+    addEventListener: (name, fn) => windowEvents.set(name, fn), fetch: async (url) => url === '/api/session'
+      ? { ok: false, status: 401 }
+      : { ok: true, status: 200, json: async () => ({ transport: 'livekit-v2' }) },
   });
   context.window = context;
   if (deniedStorage) Object.defineProperty(context, 'localStorage', { get() { throw new Error('Storage denied'); } });
@@ -101,4 +103,58 @@ test('changing source while acquisition is pending disposes the late stream', as
   assert.equal(source.track.stops, 1);
   assert.equal(f.run('activeStream'), undefined);
   assert.equal(f.ids.get('startRelay').disabled, false);
+});
+
+const remoteSession = { version: 2, transport: 'livekit', room: 'TEST', expires: 2000000000,
+  receiverToken: 'receiver', publisherToken: 'publisher', livekitUrl: 'wss://test.livekit.cloud' };
+
+test('remembered Cloud login creates sessions without asking for a key', async () => {
+  const f = fixture();
+  f.context.prompt = () => { throw new Error('must not prompt'); };
+  f.context.fetch = async (_url, init) => {
+    assert.equal(init.credentials, 'same-origin');
+    assert.equal(init.headers['X-CamStudio-Access-Key'], undefined);
+    return { ok: true, status: 201, json: async () => remoteSession };
+  };
+  assert.equal((await f.run('createRemoteSession()')).room, 'TEST');
+});
+
+test('new browsers authenticate once without saving the raw key in browser storage', async () => {
+  const f = fixture();
+  let prompts = 0, requests = 0;
+  f.context.prompt = () => { prompts++; return 'test-only-key'; };
+  f.context.fetch = async (_url, init) => {
+    requests++;
+    if (requests === 1) return { ok: false, status: 401 };
+    assert.equal(init.headers['X-CamStudio-Access-Key'], 'test-only-key');
+    return { ok: true, status: 201, json: async () => remoteSession };
+  };
+  await f.run('createRemoteSession()');
+  assert.equal(prompts, 1);
+  assert.equal(requests, 2);
+  assert.equal(f.session.has('camstudio-access-key'), false);
+  assert.equal([...f.local.values()].includes('test-only-key'), false);
+});
+
+test('old tabs migrate their stored key silently and remove it on success', async () => {
+  const f = fixture();
+  f.session.set('camstudio-access-key', 'legacy-key');
+  f.context.prompt = () => { throw new Error('must not prompt'); };
+  f.context.fetch = async (_url, init) => {
+    assert.equal(init.headers['X-CamStudio-Access-Key'], 'legacy-key');
+    return { ok: true, status: 201, json: async () => remoteSession };
+  };
+  await f.run('createRemoteSession()');
+  assert.equal(f.session.has('camstudio-access-key'), false);
+});
+
+test('cancelling or entering a wrong key stops without a repeated prompt loop', async () => {
+  for (const value of [null, 'wrong-key']) {
+    const f = fixture();
+    let prompts = 0;
+    f.context.prompt = () => { prompts++; return value; };
+    f.context.fetch = async () => ({ ok: false, status: 401 });
+    await assert.rejects(f.run('createRemoteSession()'), { message: value ? 'access_denied' : 'access_key_required' });
+    assert.equal(prompts, 1);
+  }
 });
