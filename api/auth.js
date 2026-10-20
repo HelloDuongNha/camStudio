@@ -60,6 +60,8 @@ export function createAuthHandler({ store = getStore, client = googleClient } = 
       const category = (failure) => ({
         type: /^[A-Za-z0-9_]{1,80}$/.test(failure?.name || '') ? failure.name : 'Error',
         code: Number.isInteger(failure?.code) || /^[A-Z_]{1,80}$/.test(failure?.code || '') ? failure.code : undefined,
+        reason: /bad auth|authentication failed|auth failed/i.test(failure?.message || '') ? 'authentication_failed'
+          : /not authorized|unauthorized/i.test(failure?.message || '') ? 'permission_denied' : undefined,
       });
       console.error(JSON.stringify({ event: 'account_service_error',
         route: ['me', 'login', 'callback', 'logout'].includes(route) ? route : 'unknown',
