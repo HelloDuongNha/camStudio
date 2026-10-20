@@ -105,56 +105,59 @@ test('changing source while acquisition is pending disposes the late stream', as
   assert.equal(f.ids.get('startRelay').disabled, false);
 });
 
-const remoteSession = { version: 2, transport: 'livekit', room: 'TEST', expires: 2000000000,
+const remoteSession = { version: 2, transport: 'livekit', ownerId: 'user-one', room: 'TEST', expires: 2000000000,
   receiverToken: 'receiver', publisherToken: 'publisher', livekitUrl: 'wss://test.livekit.cloud' };
 
-test('remembered Cloud login creates sessions without asking for a key', async () => {
+test('signed-in Cloud session restores from database without any key prompt', async () => {
   const f = fixture();
-  f.context.prompt = () => { throw new Error('must not prompt'); };
+  await f.run('accountReady');
+  f.run("account = { id: 'user-one', email: 'one@example.test' }");
+  f.context.prompt = () => { throw new Error('must never prompt for a key'); };
   f.context.fetch = async (_url, init) => {
     assert.equal(init.credentials, 'same-origin');
-    assert.equal(init.headers['X-CamStudio-Access-Key'], undefined);
-    return { ok: true, status: 201, json: async () => remoteSession };
+    assert.equal(init.method, 'GET');
+    assert.equal(init.headers, undefined);
+    return { ok: true, status: 200, json: async () => remoteSession };
   };
   assert.equal((await f.run('createRemoteSession()')).room, 'TEST');
+  assert.equal(f.local.has('camvirtual-pairing-session-v1'), false);
 });
 
-test('new browsers authenticate once without saving the raw key in browser storage', async () => {
+test('logged-out Cloud shows Google login without requesting a key or creating a room', async () => {
   const f = fixture();
-  let prompts = 0, requests = 0;
-  f.context.prompt = () => { prompts++; return 'test-only-key'; };
-  f.context.fetch = async (_url, init) => {
-    requests++;
-    if (requests === 1) return { ok: false, status: 401 };
-    assert.equal(init.headers['X-CamStudio-Access-Key'], 'test-only-key');
-    return { ok: true, status: 201, json: async () => remoteSession };
-  };
-  await f.run('createRemoteSession()');
-  assert.equal(prompts, 1);
-  assert.equal(requests, 2);
-  assert.equal(f.session.has('camstudio-access-key'), false);
-  assert.equal([...f.local.values()].includes('test-only-key'), false);
+  await f.run('accountReady');
+  f.context.prompt = () => { throw new Error('must never prompt for a key'); };
+  f.context.fetch = () => { throw new Error('must not create a room'); };
+  await assert.rejects(f.run('createRemoteSession()'), { message: 'login_required' });
+  assert.equal(f.ids.get('accountPanel').hidden, false);
 });
 
-test('old tabs migrate their stored key silently and remove it on success', async () => {
+test('missing saved Cloud room creates a new room after account authentication', async () => {
   const f = fixture();
-  f.session.set('camstudio-access-key', 'legacy-key');
-  f.context.prompt = () => { throw new Error('must not prompt'); };
+  await f.run('accountReady');
+  f.run("account = { id: 'user-one', email: 'one@example.test' }");
+  const methods = [];
   f.context.fetch = async (_url, init) => {
-    assert.equal(init.headers['X-CamStudio-Access-Key'], 'legacy-key');
-    return { ok: true, status: 201, json: async () => remoteSession };
+    methods.push(init.method);
+    return init.method === 'GET' ? { status: 404 } : { ok: true, status: 201, json: async () => remoteSession };
   };
-  await f.run('createRemoteSession()');
-  assert.equal(f.session.has('camstudio-access-key'), false);
+  assert.equal((await f.run('createRemoteSession()')).room, 'TEST');
+  assert.deepEqual(methods, ['GET', 'POST']);
 });
 
-test('cancelling or entering a wrong key stops without a repeated prompt loop', async () => {
-  for (const value of [null, 'wrong-key']) {
-    const f = fixture();
-    let prompts = 0;
-    f.context.prompt = () => { prompts++; return value; };
-    f.context.fetch = async () => ({ ok: false, status: 401 });
-    await assert.rejects(f.run('createRemoteSession()'), { message: value ? 'access_denied' : 'access_key_required' });
-    assert.equal(prompts, 1);
-  }
+test('passive Cloud restore never creates a room when the saved room is expired', async () => {
+  const f = fixture();
+  await f.run('accountReady');
+  f.run("account = { id: 'user-one', email: 'one@example.test' }");
+  f.context.fetch = async (_url, init) => { assert.equal(init.method, 'GET'); return { status: 404 }; };
+  assert.equal(await f.run('createRemoteSession(false, true)'), null);
+});
+
+test('a response from a different signed-in account cannot populate the QR', async () => {
+  const f = fixture();
+  await f.run('accountReady');
+  f.run("account = { id: 'user-one', email: 'one@example.test' }");
+  f.context.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ...remoteSession, ownerId: 'user-two' }) });
+  await assert.rejects(f.run('createRemoteSession()'), { message: 'account_changed' });
+  assert.equal(f.run('cloudPairing'), undefined);
 });

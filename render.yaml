@@ -13,5 +13,11 @@ services:
         sync: false
       - key: LIVEKIT_API_SECRET
         sync: false
-      - key: CAMSTUDIO_ACCESS_KEY
+      - key: APP_ORIGIN
+        value: https://campoc.onrender.com
+      - key: DATABASE_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
         sync: false

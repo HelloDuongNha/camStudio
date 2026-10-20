@@ -25,6 +25,9 @@ let previewFrameTimer;
 let sourceFrameWidth = 0;
 let sourceFrameHeight = 0;
 let sourceFrameRate = 0;
+let cloudPairing;
+let account;
+let accountReady;
 const USB_ORIGIN = 'http://127.0.0.1:4173';
 let isUsbMode = studioRuntime.selectedTransport(window.location.search, savedTransport) === 'usb';
 const apiUrl = (path) => isUsbMode ? `${USB_ORIGIN}${path}` : path;
@@ -113,7 +116,7 @@ document.querySelectorAll('.source-row').forEach((row) => {
     const nextUsbMode = row.id === 'nearSource';
     if (nextUsbMode !== isUsbMode) {
       sourceGeneration += 1;
-      if (readPairingSession()) revokePairing('Đã đổi đường truyền; tạo QR mới cho nguồn này');
+      if (readPairingSession()) void revokePairing('Đã đổi đường truyền', false);
       relayRunning = false;
       relayGeneration += 1;
       stopCanvasPump();
@@ -226,29 +229,62 @@ async function getRelayInfo() {
   return relayInfo;
 }
 
-async function createRemoteSession() {
-  const requestSession = (accessKey) => fetchWithTimeout('/api/session', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: accessKey ? { 'X-CamStudio-Access-Key': accessKey } : {},
-  }, 8000);
-  // Migrate keys retained by older tabs; new logins use an HttpOnly cookie.
-  let response = await requestSession(sessionStore.getItem('camstudio-access-key'));
-  if (response.status === 401) {
-    sessionStore.removeItem('camstudio-access-key');
+function showAccount() {
+  document.querySelector('#accountPanel').hidden = false;
+  document.querySelector('#googleLogin').setAttribute('href', `/api/auth?route=login&transport=${isUsbMode ? 'usb' : 'cloud'}`);
+}
+
+async function loadAccount() {
+  const status = document.querySelector('#accountStatus');
+  try {
+    const response = await fetchWithTimeout('/api/auth?route=me', { credentials: 'same-origin', cache: 'no-store' }, 10000);
+    if (!response.ok) throw new Error('account_unavailable');
+    const result = await response.json();
+    account = result.user || null;
+    status.textContent = account ? `Đã đăng nhập: ${account.email}` : result.configured
+      ? 'Đăng nhập Google để tạo và mở lại mã QR Cloud của bạn.'
+      : 'Máy chủ chưa cấu hình đăng nhập Google và database. USB vẫn dùng bình thường.';
+    document.querySelector('#googleLogin').hidden = !result.configured || Boolean(account);
+    document.querySelector('#accountLogout').hidden = !account;
+    document.querySelector('#accountButton').textContent = account ? account.display_name.slice(0, 1).toUpperCase() : 'G';
+    document.querySelector('#accountButton').setAttribute('aria-label', account ? `Tài khoản ${account.email}` : 'Đăng nhập tài khoản Google');
+    return account;
+  } catch {
+    account = null;
+    status.textContent = 'Chưa kiểm tra được tài khoản. Đóng rồi mở lại bảng tài khoản để thử lại.';
+    document.querySelector('#googleLogin').hidden = true;
+    document.querySelector('#accountLogout').hidden = true;
+    return null;
+  }
+}
+
+async function requireAccount() {
+  await accountReady;
+  if (account) return;
+  showAccount();
+  throw new Error('login_required');
+}
+
+async function createRemoteSession(forceNew = false, existingOnly = false) {
+  await requireAccount();
+  const accountId = account.id;
+  let response = await fetchWithTimeout('/api/session', { method: forceNew ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store' }, 10000);
+  if (response.status === 404 && !forceNew) {
     await studioRuntime.discardResponse(response);
-    const accessKey = window.prompt('Xác thực Cam Studio một lần trên trình duyệt này. Tự ghi nhớ 30 ngày (cần cho phép cookie):')?.trim() || '';
-    if (!accessKey) throw new Error('access_key_required');
-    response = await requestSession(accessKey);
-    if (response.status === 401) {
-      await studioRuntime.discardResponse(response);
-      throw new Error('access_denied');
-    }
+    if (existingOnly) return null;
+    if (account?.id !== accountId) throw new Error('account_changed');
+    response = await fetchWithTimeout('/api/session', { method: 'POST', credentials: 'same-origin' }, 10000);
+  }
+  if (response.status === 401) {
+    accountReady = loadAccount();
+    await accountReady;
+    showAccount();
+    throw new Error('login_required');
   }
   if (!response.ok) throw new Error('remote_session_failed');
-  sessionStore.removeItem('camstudio-access-key');
   const remote = await response.json();
-  return {
+  if (account?.id !== accountId || remote.ownerId !== accountId) throw new Error('account_changed');
+  cloudPairing = {
     version: remote.version,
     transport: remote.transport,
     room: remote.room,
@@ -259,7 +295,30 @@ async function createRemoteSession() {
     pairCode: 'QR / LINK',
     origin: remote.livekitUrl,
   };
+  return cloudPairing;
 }
+
+document.querySelector('#accountButton').addEventListener('click', () => { showAccount(); accountReady = loadAccount(); });
+document.querySelector('#closeAccount').addEventListener('click', () => { document.querySelector('#accountPanel').hidden = true; });
+document.querySelector('#accountLogout').addEventListener('click', async () => {
+  try {
+    const response = await fetchWithTimeout('/api/auth?route=logout', { method: 'POST', credentials: 'same-origin' });
+    if (!response.ok) throw new Error('logout_failed');
+    if (!isUsbMode) {
+      await revokePairing('Đã đăng xuất', false);
+      sourceGeneration += 1;
+      stopPreviewPump();
+      studioRuntime.stopStream(activeStream);
+      activeStream = undefined;
+      videoPreview.srcObject = null;
+      relayCanvas.hidden = true;
+      document.querySelector('.preview-empty').hidden = false;
+    }
+    cloudPairing = undefined;
+    accountReady = loadAccount();
+    await accountReady;
+  } catch { showSnackbar('Chưa đăng xuất được. Hãy thử lại.'); }
+});
 
 function randomString(length, alphabet) {
   const bytes = crypto.getRandomValues(new Uint8Array(length));
@@ -275,7 +334,6 @@ function randomToken() {
 async function registerPairingSession(session) {
   if (session.transport === 'livekit') {
     activeRelaySession = session;
-    localStore.setItem(pairingStorageKey(), JSON.stringify(session));
     return session;
   }
   const response = await fetchWithTimeout(apiUrl('/api/sessions'), {
@@ -323,6 +381,7 @@ function pairingUri(session) {
 }
 
 function readPairingSession() {
+  if (!isUsbMode) return account && cloudPairing?.expiresAt > Date.now() ? cloudPairing : null;
   try {
     const session = JSON.parse(localStore.getItem(pairingStorageKey()));
     if ((session?.version === 1 || session?.version === 2) && session.expiresAt > Date.now()) return session;
@@ -386,6 +445,7 @@ function publishCurrentSource(session) {
 }
 
 async function ensurePairingSession(forceNew = false) {
+  if (!isUsbMode) return registerPairingSession(await createRemoteSession(forceNew));
   if (forceNew) {
     const previous = readPairingSession();
     if (previous && previous.transport !== 'livekit') {
@@ -418,17 +478,21 @@ async function openPairing(forceNew = false) {
     else if (relayRunning && hasLiveSource()) setPairingLiveState(isUsbMode ? 'Camera đang phát qua USB' : 'Camera + mic đang phát tới điện thoại', true);
     else setPairingLiveState(isUsbMode ? 'Phiên USB sẵn sàng · chưa phát camera' : 'Đã có QR · chưa phát camera/mic');
   } catch (error) {
-    const message = error.message === 'access_key_required'
-      ? 'Cần khóa truy cập Cam Studio để tạo phiên remote.'
-      : error.message === 'access_denied'
-        ? 'Khóa truy cập Cam Studio không đúng.'
+    const message = error.message === 'login_required'
+      ? 'Đăng nhập Google để dùng nguồn Cloud.'
         : isUsbMode ? 'Không nối được USB. Hãy cho phép Chrome truy cập mạng cục bộ, rồi kiểm tra server.py và adb reverse.' : 'Không tạo được phiên remote. Kiểm tra cấu hình LiveKit trên máy chủ.';
     showSnackbar(message);
   }
 }
 
-function revokePairing(message = 'Đã thu hồi phiên ghép nối') {
+async function revokePairing(message = 'Đã thu hồi phiên ghép nối', remote = true) {
   const session = readPairingSession();
+  if (remote && !isUsbMode) {
+    try {
+      const response = await fetchWithTimeout('/api/session', { method: 'DELETE', credentials: 'same-origin' }, 10000);
+      if (!response.ok) throw new Error('revoke_failed');
+    } catch { showSnackbar('Chưa thu hồi được phiên Cloud. Hãy thử lại.'); return; }
+  }
   if (session && session.transport !== 'livekit') {
     fetch(apiUrl(`/api/rooms/${session.room}?token=${encodeURIComponent(session.token)}`), {
       method: 'DELETE',
@@ -442,6 +506,7 @@ function revokePairing(message = 'Đã thu hồi phiên ghép nối') {
     liveKitRoom = undefined;
   }
   activeRelaySession = undefined;
+  if (!isUsbMode) cloudPairing = undefined;
   localStore.removeItem(pairingStorageKey());
   window.clearInterval(expiryTimer);
   const badge = document.querySelector('#sessionBadge');
@@ -826,7 +891,7 @@ async function startDesktopSource(showPairingAfter = false) {
       if (!isCurrentSource()) return false;
       const message = isUsbMode
         ? 'Preview đã mở; chưa nối được đường truyền USB. Kiểm tra cáp và dịch vụ USB trên máy tính rồi bấm lại.'
-        : 'Preview đã mở; chưa tạo được phiên Internet. Kiểm tra khóa truy cập rồi bấm lại.';
+        : error.message === 'login_required' ? 'Đăng nhập Google để phát qua Cloud.' : 'Preview đã mở; chưa tạo được phiên Internet. Hãy kiểm tra kết nối rồi thử lại.';
       relayStatus.textContent = message;
       setPairingLiveState(message);
       startRelay.textContent = 'Thử kết nối lại';
@@ -880,6 +945,24 @@ document.querySelectorAll('.permission-button').forEach((button) => {
   });
 });
 
+sessionStore.removeItem('camstudio-access-key');
+localStore.removeItem(PAIRING_STORAGE_KEY); // Remove legacy Cloud credentials; account database is authoritative.
+accountReady = loadAccount();
+void accountReady.then(async (user) => {
+  if (!user || isUsbMode) return;
+  try {
+    const session = await createRemoteSession(false, true);
+    if (session && !isUsbMode && account?.id === user.id) renderPairing(session);
+  } catch { /* Explicit pairing action offers retry; bootstrap never creates a room. */ }
+});
+const loginResult = new URLSearchParams(window.location.search).get('login');
+if (loginResult) {
+  showAccount();
+  showSnackbar('Chưa đăng nhập được Google. Hãy thử lại.');
+  const cleanUrl = new URL(window.location.href);
+  cleanUrl.searchParams.delete('login');
+  window.history.replaceState(null, '', cleanUrl);
+}
 const activeSession = readPairingSession();
 if (activeSession) {
   ensurePairingSession(false).then(renderPairing).catch(() => revokePairing('Phiên cũ không còn hoạt động'));

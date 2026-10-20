@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sessionHandler from './api/session.js';
+import authHandler from './api/auth.js';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const port = Number.parseInt(process.env.PORT || '4173', 10);
@@ -61,13 +62,8 @@ const server = createServer(async (request, response) => {
   if (request.method === 'GET' && url.pathname === '/api/info') {
     return json(response, 200, { transport: 'livekit-v2' });
   }
-  if (url.pathname === '/api/session') {
-    response.status = (status) => {
-      response.statusCode = status;
-      return response;
-    };
-    return sessionHandler(request, response);
-  }
+  if (url.pathname === '/api/auth') return authHandler(request, response);
+  if (url.pathname === '/api/session') return sessionHandler(request, response);
   if ((request.method === 'GET' || request.method === 'HEAD') && serveFile(response, url.pathname)) {
     return;
   }

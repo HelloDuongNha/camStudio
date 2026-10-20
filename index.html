@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#f8f7fc" />
     <meta name="description" content="Cam Virtual — không gian điều khiển nguồn camera và microphone cho thiết bị của bạn." />
     <title>Cam Virtual Studio</title>
-    <link rel="stylesheet" href="styles.css?v=stability-13" />
+    <link rel="stylesheet" href="styles.css?v=google-account-15" />
   </head>
   <body>
     <aside id="studioRecovery" role="alert" hidden style="position:fixed;z-index:10000;inset:12px 12px auto;padding:16px;border:2px solid #a18aff;border-radius:14px;background:#24202f;color:#fff;font:14px/1.5 system-ui;max-width:680px;box-shadow:0 8px 32px #0006">
@@ -44,7 +44,7 @@
         <button class="icon-button" id="themeToggle" type="button" aria-label="Đổi giao diện sáng tối" title="Đổi giao diện">
           <svg><use href="#i-sun" /></svg>
         </button>
-        <button class="avatar-button" type="button" aria-label="Tài khoản demo">CV</button>
+        <button class="avatar-button" id="accountButton" type="button" aria-label="Đăng nhập tài khoản Google" title="Tài khoản">G</button>
       </div>
     </header>
 
@@ -56,6 +56,18 @@
           <p class="subtitle">Chuẩn bị nguồn hình và tiếng trước khi kết nối với điện thoại.</p>
         </div>
         <button class="button secondary catalog-trigger" type="button"><svg><use href="#i-grid" /></svg>Xem component</button>
+      </section>
+
+      <section class="card account-panel" id="accountPanel" aria-labelledby="accountTitle" hidden>
+        <div><p class="section-kicker">Tài khoản Studio</p><h2 id="accountTitle">Đăng nhập bằng Google</h2>
+          <p id="accountStatus" role="status" aria-live="polite">Đang kiểm tra đăng nhập…</p>
+          <p>Phòng và mã QR Cloud còn hạn được lưu theo tài khoản. Kết nối USB dùng trực tiếp, không cần đăng nhập.</p>
+        </div>
+        <div class="account-actions">
+          <a class="button primary" id="googleLogin" href="/api/auth?route=login&amp;transport=cloud" hidden>Tiếp tục với Google</a>
+          <button class="button secondary" id="accountLogout" type="button" hidden>Đăng xuất</button>
+          <button class="button ghost" id="closeAccount" type="button">Đóng</button>
+        </div>
       </section>
 
       <div class="studio-grid">
@@ -234,6 +246,6 @@
     <script src="studio-runtime.js?v=stability-13"></script>
     <script src="vendor/qrcode.js"></script>
     <script src="vendor/livekit-client.umd.js"></script>
-    <script src="app.js?v=remember-browser-14"></script>
+    <script src="app.js?v=google-account-15"></script>
   </body>
 </html>

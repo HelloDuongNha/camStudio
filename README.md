@@ -24,24 +24,39 @@ Phải tạo **Web Service**, không dùng Static Site vì `/api/session` cần 
 - Start Command: `npm start`
 - Health Check Path: `/healthz`
 
-Khai báo bốn biến môi trường `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` và `CAMSTUDIO_ACCESS_KEY`, sau đó deploy commit mới nhất. Repo có sẵn `render.yaml` nếu tạo dịch vụ bằng Blueprint.
+Giữ ba biến `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` và cấu hình đăng nhập/database bên dưới. Repo có sẵn `render.yaml`. Bản này thay khóa truy cập bằng Google; cần hoàn tất cấu hình trước khi triển khai để Cloud tiếp tục dùng được. USB không cần đăng nhập.
 
 ## Deploy Vercel
 
-Khai báo bốn biến môi trường cho Production, Preview và Development rồi redeploy:
+Khai báo các biến môi trường cho đúng môi trường rồi redeploy:
 
 - `LIVEKIT_URL`
 - `LIVEKIT_API_KEY`
 - `LIVEKIT_API_SECRET`
-- `CAMSTUDIO_ACCESS_KEY` — chuỗi bí mật tự chọn, dài ít nhất 24 ký tự
+- `APP_ORIGIN` — origin HTTPS chính xác, ví dụ `https://campoc.onrender.com`
+- `DATABASE_URL` — PostgreSQL riêng, không đưa xuống frontend
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` — OAuth client loại Web application
 
-Ba giá trị LiveKit chỉ tồn tại ở máy chủ và không được gửi xuống trình duyệt. Với Cloud, nhập `CAMSTUDIO_ACCESS_KEY` một lần trên mỗi trình duyệt; máy chủ cấp cookie đăng nhập có hạn 30 ngày (`HttpOnly`, `Secure`, `SameSite=Strict`, cần HTTPS). Mở lại tab hoặc trình duyệt sẽ tự dùng cookie, không lưu khóa gốc trong localStorage/sessionStorage. Cần nhập lại khi hết hạn, xóa/chặn cookie, dùng trình duyệt khác hoặc máy chủ đổi khóa. Khóa lưu trong tab cũ được tự chuyển sang cookie sau lần tạo phiên thành công. USB không cần khóa Cloud. QR chứa token nhận có hạn một giờ, không chứa API secret. Không nhúng khóa truy cập vào mã web công khai.
+Các secret chỉ tồn tại ở máy chủ. Studio không hỏi `CAMSTUDIO_ACCESS_KEY` nữa, kể cả lần đầu. Người dùng chọn tài khoản Google; phiên đăng nhập được lưu 30 ngày bằng cookie HttpOnly, Secure, SameSite=Lax và hash trong database. Đăng xuất xóa phiên đó ở server. Tài khoản Google, phòng, hạn QR được lưu trong PostgreSQL; không lưu ảnh QR, media hay token Google. QR còn hạn được dựng lại khi đăng nhập trên trình duyệt khác. Room/token Cloud không còn lưu trong localStorage. Khóa và token Cloud cũ trong storage được xóa khi mở bản mới.
+
+### Thiết lập Google và PostgreSQL
+
+1. Tạo database PostgreSQL riêng (Render Postgres hoặc dịch vụ PostgreSQL bạn đang dùng), đặt `DATABASE_URL`. Không dùng file SQLite trên filesystem tạm của Render. Dùng cấu hình TLS do nhà cung cấp yêu cầu; không tắt xác minh chứng chỉ.
+2. Trong Google Cloud Console, tạo OAuth client loại **Web application**, cấu hình consent screen và thêm tài khoản thử nếu ứng dụng còn ở Testing.
+3. Thêm Authorized redirect URI chính xác: `https://campoc.onrender.com/api/auth?route=callback`. Nếu đổi domain, đổi cả `APP_ORIGIN` và redirect URI. Không cần thêm API key Google vào giao diện.
+4. Đặt `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` và `APP_ORIGIN` trên Render/Vercel. Người dùng cuối không nhập các giá trị này. Mọi tài khoản Google có email đã xác minh đều đăng nhập được, không có danh sách giới hạn Gmail. Khi phát hành cho nhiều người dùng, chuyển Google OAuth Audience sang Production thay vì chỉ cấp Test users.
+5. Server tự tạo các bảng `studio_users`, `studio_logins`, `studio_oauth_states`, `studio_pairings` ở lần truy cập database đầu; tài khoản DB cần quyền tạo bảng/index. Sao lưu database theo chính sách nhà cung cấp.
+6. Deploy rồi chọn nút **G** → **Tiếp tục với Google**. Thử đăng xuất/đăng nhập lại và mở QR còn hạn trên trình duyệt thứ hai. Database chỉ lưu metadata, không lưu video.
+
+Local Cloud development: dùng `APP_ORIGIN=http://localhost:4173` và thêm redirect URI localhost tương ứng trong Google Console. Cookie không Secure chỉ được dùng với localhost/127.0.0.1. `.env` cần được nạp vào môi trường trước khi chạy Node.
+
+Mỗi tài khoản hiện giữ một phòng Cloud đang hoạt động, hạn một giờ. Đọc lại QR không kéo dài hạn. Tạo mới/đóng phòng gọi LiveKit để ngắt phòng cũ và bỏ bản ghi liên kết; token LiveKit đã phát vẫn có thể còn hiệu lực đến hạn và không được xem là đã thu hồi JWT ngay lập tức. QR USB vẫn gắn với relay cục bộ và được giữ riêng trên máy tính, không lưu như QR Cloud có thể dùng từ xa.
 
 ## Luồng sử dụng
 
 1. Mở Studio trên máy tính. Chọn camera/OBS Virtual Camera và microphone muốn phát.
 2. Với USB, chạy `./start_usb_mode.sh`, chọn **Kết nối gần** rồi bật camera/OBS. Studio tạo phiên cục bộ và VirtualCamPoC tự nhận qua `adb reverse`; không cần quét QR.
-3. Với LAN/Cloud, bấm **Tạo mã ghép nối**, sau đó quét QR hoặc nhập mã trong VirtualCamPoC.
+3. Với Cloud, đăng nhập Google rồi bấm **Tạo mã ghép nối**, sau đó quét QR trong VirtualCamPoC. Mở lại trang sẽ khôi phục phòng còn hạn theo tài khoản. Với relay LAN/USB, phiên vẫn được quản lý cục bộ.
 4. Chọn nguồn đã ghép làm nguồn đang chạy, rồi mở Cam Browser/WebTest.
 
 ### Nguồn OBS dọc

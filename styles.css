@@ -63,6 +63,10 @@ html[data-theme="dark"] {
 }
 
 * { box-sizing: border-box; }
+.account-panel { margin-bottom: 24px; padding: 24px; }
+.account-panel p { color: var(--text-muted); line-height: 1.6; }
+.account-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+.account-actions a { text-decoration: none; }
 html { scroll-behavior: smooth; }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--background); color: var(--text); transition: background var(--motion-standard), color var(--motion-standard); }
 button, input { font: inherit; }
@@ -222,7 +226,7 @@ input[type="range"] { width: 100%; height: 5px; margin: 7px 0; border-radius: va
 
 @media (max-width: 860px) {
   .app-bar { grid-template-columns: 1fr auto; min-height: 66px; padding: 0 18px; }
-  .desktop-nav, .bar-actions > .status-badge, .bar-actions > .avatar-button { display: none; }
+  .desktop-nav, .bar-actions > .status-badge { display: none; }
   .page-shell { width: min(100% - 28px, 680px); padding-top: 32px; }
   .studio-grid { grid-template-columns: 1fr; }
   .side-stack { grid-template-columns: 1fr; }
