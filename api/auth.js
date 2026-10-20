@@ -55,7 +55,12 @@ export function createAuthHandler({ store = getStore, client = googleClient } = 
         return redirect(response, pending.return_path);
       }
       return json(response, 405, { error: 'method_not_allowed' });
-    } catch {
+    } catch (error) {
+      // Keep operational failures diagnosable without logging tokens, URIs or profiles.
+      console.error(JSON.stringify({ event: 'account_service_error',
+        route: ['me', 'login', 'callback', 'logout'].includes(route) ? route : 'unknown',
+        type: /^[A-Za-z0-9_]{1,80}$/.test(error?.name || '') ? error.name : 'Error',
+        code: Number.isInteger(error?.code) ? error.code : undefined }));
       if (route === 'callback' || route === 'login') return redirect(response, '/login?error=failed');
       return json(response, 503, { error: 'account_service_unavailable' });
     }
