@@ -13,7 +13,10 @@ let previewTimer, statusTimer, qualityTimer, expiryTimer, snackbarTimer;
 let generation = 0, opening = false, closing = false, publishTask, relayRunning = false;
 let sourceFrameRate = 30, previewFrameCallback;
 let previewOpening = false;
-const actualFps = () => Math.min(Number(outputFps.value) || 30, sourceFrameRate || 30);
+let settingsTimer, settingsRevision = 0, settingsApplying = false, settingsPending = false;
+let appliedDevices, publishedAudioTrack, publishedVideoTrack;
+let drawSequence = 0, meter = runtime.frameMeter(performance.now()), metricsTimer;
+const actualFps = () => Math.min(isUsbMode ? 15 : 30, Number(outputFps.value) || 30, sourceFrameRate || 30);
 
 function showSnackbar(text) {
   clearTimeout(snackbarTimer); $('#snackbarText').textContent = text; $('#snackbar').hidden = false;
@@ -40,6 +43,10 @@ async function jsonRequest(url, method, data) {
   return response.json();
 }
 function updateTransport() {
+  const limit = isUsbMode ? 15 : 30;
+  outputFps.value = String(Math.min(Number(outputFps.value) || 30, limit));
+  for (const option of outputFps.options || []) option.disabled = Number(option.value) > limit;
+  $('#fpsLimit').textContent = `Cam hiện hỗ trợ tối đa ${limit} fps qua ${isUsbMode ? 'USB' : 'Cloud'}. Chưa hỗ trợ 60 fps đầu cuối.`;
   $('#computerSource').classList.toggle('selected', !isUsbMode); $('#nearSource').classList.toggle('selected', isUsbMode);
   $('#computerSource').setAttribute('aria-pressed', String(!isUsbMode)); $('#nearSource').setAttribute('aria-pressed', String(isUsbMode));
   $('#audioField').hidden = isUsbMode;
@@ -63,6 +70,8 @@ function stopPublishing() {
   clearInterval(statusTimer); statusTimer = undefined;
   clearInterval(qualityTimer); qualityTimer = undefined;
   runtime.stopStream(canvasStream); canvasStream = undefined;
+  publishedAudioTrack = undefined; publishedVideoTrack = undefined;
+  $('#sentFps').textContent = '—';
   const room = liveKitRoom; liveKitRoom = undefined;
   if (room) void room.disconnect(false).catch(() => {});
 }
@@ -72,6 +81,8 @@ function stopSource() {
   clearInterval(previewTimer); previewTimer = undefined;
   if (previewFrameCallback !== undefined) videoPreview.cancelVideoFrameCallback?.(previewFrameCallback);
   previewFrameCallback = undefined;
+  clearInterval(metricsTimer); metricsTimer = undefined;
+  $('#sourceFps').textContent = '—'; $('#renderFps').textContent = '—';
   $('#previewButton').hidden = false;
   runtime.stopStream(activeStream); activeStream = undefined;
   videoPreview.srcObject = null; relayCanvas.hidden = true;
@@ -81,70 +92,143 @@ function stopSource() {
 function drawRelayFrame() {
   if (!videoPreview.videoWidth || !videoPreview.videoHeight) return;
   const context = relayCanvas.getContext('2d', { alpha: false });
-  const scale = Math.max(relayCanvas.width / videoPreview.videoWidth, relayCanvas.height / videoPreview.videoHeight) * 1.001;
+  const scale = Math.min(relayCanvas.width / videoPreview.videoWidth, relayCanvas.height / videoPreview.videoHeight);
   context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high';
-  context.setTransform(1, 0, 0, 1, 0, 0); context.clearRect(0, 0, relayCanvas.width, relayCanvas.height);
+  context.setTransform(1, 0, 0, 1, 0, 0); context.fillStyle = '#000'; context.fillRect(0, 0, relayCanvas.width, relayCanvas.height);
   context.drawImage(videoPreview, (relayCanvas.width - videoPreview.videoWidth * scale) / 2,
     (relayCanvas.height - videoPreview.videoHeight * scale) / 2, videoPreview.videoWidth * scale, videoPreview.videoHeight * scale);
+  drawSequence++; meter.drawn();
+  canvasStream?.getVideoTracks()[0]?.requestFrame?.();
 }
 function configureCanvas(track) {
   const settings = track.getSettings(), width = videoPreview.videoWidth || settings.width, height = videoPreview.videoHeight || settings.height;
   if (!width || !height) throw new Error('source_resolution_unavailable');
   sourceFrameRate = Number(settings.frameRate) || 30;
-  if (outputResolution.value.startsWith('portrait-')) { relayCanvas.width = 1080; relayCanvas.height = 1920; }
-  else {
-    const scale = outputResolution.value === 'source' ? 1 : Math.min(1, 1080 / Math.min(width, height));
-    relayCanvas.width = Math.max(2, Math.round(width * scale / 2) * 2); relayCanvas.height = Math.max(2, Math.round(height * scale / 2) * 2);
-  }
+  const size = runtime.outputSize(outputResolution.value, width, height);
+  relayCanvas.width = size.width; relayCanvas.height = size.height;
+  $('#previewStage').style.setProperty('--preview-ratio', size.width / size.height);
   $('#previewStage').classList.toggle('landscape', relayCanvas.width >= relayCanvas.height);
   $('#previewStage').style.aspectRatio = `${relayCanvas.width} / ${relayCanvas.height}`;
   $('#previewResolution').textContent = `${width}×${height} → ${relayCanvas.width}×${relayCanvas.height}`;
+  meter = runtime.frameMeter(performance.now());
+  clearInterval(metricsTimer);
+  metricsTimer = setInterval(() => {
+    const sample = meter.sample(performance.now());
+    if (!sample) return;
+    $('#sourceFps').textContent = videoPreview.requestVideoFrameCallback ? `${sample.source.toFixed(1)} fps` : 'Không có số đo';
+    $('#renderFps').textContent = `${sample.drawn.toFixed(1)} fps`;
+  }, 1100);
   drawRelayFrame(); clearInterval(previewTimer);
   if (previewFrameCallback !== undefined) videoPreview.cancelVideoFrameCallback?.(previewFrameCallback);
   if (videoPreview.requestVideoFrameCallback) {
     let lastDraw = 0;
-    const drawNext = (now) => {
+    const drawNext = (now, metadata) => {
       if (!hasSource()) return;
+      meter.source(metadata?.presentedFrames);
       if (now - lastDraw >= 1000 / actualFps() - 2) { drawRelayFrame(); lastDraw = now; }
       previewFrameCallback = videoPreview.requestVideoFrameCallback(drawNext);
     };
     previewFrameCallback = videoPreview.requestVideoFrameCallback(drawNext);
   } else previewTimer = setInterval(drawRelayFrame, 1000 / actualFps());
 }
-async function populateDevices(videoId = '', audioId = '') {
+async function populateDevices(videoId = '', audioId = '', selectionRevision = settingsRevision) {
   const devices = await navigator.mediaDevices.enumerateDevices();
+  const selectedVideo = settingsRevision === selectionRevision ? videoId : videoDevice.value;
+  const selectedAudio = settingsRevision === selectionRevision ? audioId : audioDevice.value;
   videoDevice.replaceChildren(new Option('Tự động chọn camera', ''));
   audioDevice.replaceChildren(new Option('Tự động chọn micro', ''));
   devices.filter((device) => device.kind === 'videoinput').forEach((device, index) => videoDevice.add(new Option(device.label || `Camera ${index + 1}`, device.deviceId)));
   devices.filter((device) => device.kind === 'audioinput').forEach((device, index) => audioDevice.add(new Option(device.label || `Micro ${index + 1}`, device.deviceId)));
-  videoDevice.value = videoId; audioDevice.value = audioId;
+  videoDevice.value = selectedVideo; audioDevice.value = selectedAudio;
 }
 async function ensureSource(run) {
   if (hasSource()) return;
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('media_unsupported');
   const videoId = videoDevice.value, audioId = audioDevice.value;
-  const portrait = outputResolution.value.startsWith('portrait-');
-  const constraints = (mode) => ({ video: {
-    ...(mode === 'none' ? {} : { width: { [mode]: portrait ? 1080 : 1920 }, height: { [mode]: portrait ? 1920 : 1080 } }),
+  const selectionRevision = settingsRevision;
+  const constraints = { video: {
+    width: { ideal: 1920 }, height: { ideal: 1080 },
     ...(videoId ? { deviceId: { exact: videoId } } : {}), frameRate: { ideal: Number(outputFps.value) },
-    resizeMode: portrait && mode === 'exact' ? { exact: 'none' } : { ideal: 'none' },
-  }, audio: isUsbMode ? false : audioId ? { deviceId: { exact: audioId } } : true });
-  let next;
-  try { next = await navigator.mediaDevices.getUserMedia(constraints(outputResolution.value === 'source' ? 'none' : 'exact')); }
-  catch (error) {
-    if (outputResolution.value === 'source' || !['OverconstrainedError', 'NotFoundError'].includes(error.name)) throw error;
-    next = await navigator.mediaDevices.getUserMedia(constraints(portrait ? 'none' : 'ideal'));
-  }
+    resizeMode: { ideal: 'none' },
+  }, audio: isUsbMode ? false : audioId ? { deviceId: { exact: audioId } } : true };
+  const next = await navigator.mediaDevices.getUserMedia(constraints);
   if (run !== generation) { runtime.stopStream(next); throw new Error('cancelled'); }
   activeStream = next;
+  appliedDevices = { video: videoId, audio: audioId };
   next.getTracks().forEach((track) => track.addEventListener?.('ended', () => {
-    if (activeStream === next) { stopSource(); showSnackbar('Nguồn đã dừng. Tạo mã ghép nối để mở lại.'); }
+    if (activeStream === next) { stopSource(); showSnackbar('Nguồn đã dừng. Bấm Mở xem trước để thử lại.'); }
   }));
   videoPreview.srcObject = next; await videoPreview.play();
   if (run !== generation) { runtime.stopStream(next); throw new Error('cancelled'); }
   configureCanvas(next.getVideoTracks()[0]); relayCanvas.hidden = false; $('.preview-empty').hidden = true;
-  $('#restartSource').hidden = false; $('#previewButton').hidden = true;
-  await populateDevices(next.getVideoTracks()[0]?.getSettings().deviceId || videoId, next.getAudioTracks()[0]?.getSettings().deviceId || audioId);
+  $('#restartSource').hidden = true; $('#previewButton').hidden = true;
+  const resolvedVideo = next.getVideoTracks()[0]?.getSettings().deviceId || videoId;
+  const resolvedAudio = next.getAudioTracks()[0]?.getSettings().deviceId || audioId;
+  await populateDevices(resolvedVideo, resolvedAudio, selectionRevision);
+  appliedDevices = { video: resolvedVideo, audio: resolvedAudio };
+}
+
+async function applySettings() {
+  if (!settingsPending || settingsApplying) return;
+  if (opening || closing || previewOpening) { settingsTimer = setTimeout(applySettings, 100); return; }
+  settingsPending = false;
+  if (!hasSource()) return;
+  settingsApplying = true; busy(true);
+  const revision = settingsRevision, run = generation, previous = activeStream;
+  const selection = { video: videoDevice.value, audio: audioDevice.value };
+  let next;
+  $('#settingsStatus').textContent = 'Đang áp dụng…';
+  try {
+    if (selection.video !== appliedDevices?.video || (!isUsbMode && selection.audio !== appliedDevices?.audio)) {
+      next = await navigator.mediaDevices.getUserMedia({ video: {
+        ...(selection.video ? { deviceId: { exact: selection.video } } : {}),
+        width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: Number(outputFps.value) },
+      }, audio: isUsbMode ? false : selection.audio ? { deviceId: { exact: selection.audio } } : true });
+      if (revision !== settingsRevision || run !== generation) { runtime.stopStream(next); return; }
+      videoPreview.srcObject = next; await videoPreview.play();
+      if (revision !== settingsRevision || run !== generation) {
+        runtime.stopStream(next);
+        if (run === generation) { videoPreview.srcObject = previous; await videoPreview.play(); }
+        return;
+      }
+      if (publishedAudioTrack && next.getAudioTracks()[0]) await publishedAudioTrack.replaceTrack(next.getAudioTracks()[0]);
+      activeStream = next; appliedDevices = selection;
+      next.getTracks().forEach((track) => track.addEventListener?.('ended', () => {
+        if (activeStream === next) { stopSource(); showSnackbar('Nguồn đã dừng. Bấm Mở xem trước để thử lại.'); }
+      }));
+      runtime.stopStream(previous);
+    } else {
+      await previous.getVideoTracks()[0]?.applyConstraints?.({ frameRate: { ideal: Number(outputFps.value) } });
+      if (revision !== settingsRevision || run !== generation) return;
+    }
+    configureCanvas(activeStream.getVideoTracks()[0]);
+    const sender = publishedVideoTrack?.sender;
+    if (sender?.getParameters && sender?.setParameters) {
+      const parameters = sender.getParameters();
+      for (const encoding of parameters.encodings || []) {
+        encoding.maxFramerate = actualFps();
+        encoding.maxBitrate = Math.min(12000000, Math.max(2500000, Math.round(relayCanvas.width * relayCanvas.height * actualFps() * .10)));
+      }
+      await sender.setParameters(parameters);
+    }
+    $('#settingsStatus').textContent = 'Đã áp dụng';
+    $('#restartSource').hidden = true;
+  } catch (error) {
+    if (next && activeStream !== next) {
+      runtime.stopStream(next);
+      if (run === generation) { videoPreview.srcObject = previous; await videoPreview.play().catch(() => {}); }
+    }
+    $('#settingsStatus').textContent = activeStream === previous ? 'Chưa áp dụng được · nguồn trước vẫn được giữ' : 'Nguồn đã đổi · chưa cập nhật được chất lượng gửi';
+    $('#restartSource').hidden = false;
+    showSnackbar(error.name === 'NotAllowedError' ? 'Chưa có quyền dùng nguồn mới.' : 'Chưa đổi được nguồn. Chọn lại để thử.');
+  } finally {
+    settingsApplying = false; busy(false);
+    if (settingsPending || revision !== settingsRevision) { settingsPending = true; settingsTimer = setTimeout(applySettings, 0); }
+  }
+}
+function scheduleSettings() {
+  settingsRevision++; settingsPending = true;
+  clearTimeout(settingsTimer); settingsTimer = setTimeout(applySettings, 200);
 }
 function invitation(value) {
   if (value.transport === 'livekit') return `camvirtual://connect?${new URLSearchParams({ code: value.code, password: value.password, origin: location.origin })}`;
@@ -194,10 +278,15 @@ async function publishCloud(value, run) {
   room.on(sdk.RoomEvent.ParticipantConnected, () => { if (run === generation) void pollStatus(value, run); });
   room.on(sdk.RoomEvent.Reconnecting, () => { if (run === generation) $('#relayStatus').textContent = 'Mạng gián đoạn · đang kết nối lại…'; });
   room.on(sdk.RoomEvent.Reconnected, () => { if (run === generation) $('#relayStatus').textContent = 'Đang phát qua Cloud'; });
-  room.on(sdk.RoomEvent.Disconnected, () => { if (run === generation) $('#relayStatus').textContent = 'Nguồn Cloud đã ngắt. Bấm khởi động lại nguồn để thử lại.'; });
+  room.on(sdk.RoomEvent.Disconnected, () => { if (run === generation && liveKitRoom === room) {
+    $('#relayStatus').textContent = 'Nguồn Cloud đã ngắt. Bấm Thử lại nguồn để kết nối.'; $('#restartSource').hidden = false;
+  } });
   await room.connect(credentials.livekitUrl, credentials.token);
   if (run !== generation) { await room.disconnect(); return; }
-  canvasStream = relayCanvas.captureStream(actualFps());
+  canvasStream = relayCanvas.captureStream(0);
+  if (!canvasStream.getVideoTracks()[0]?.requestFrame) {
+    runtime.stopStream(canvasStream); canvasStream = relayCanvas.captureStream(30);
+  }
   const video = canvasStream.getVideoTracks()[0], audio = activeStream?.getAudioTracks()[0];
   if (video) {
     video.contentHint = 'motion';
@@ -206,6 +295,8 @@ async function publishCloud(value, run) {
       videoEncoding: { maxBitrate: Math.min(12000000, Math.max(2500000, Math.round(relayCanvas.width * relayCanvas.height * actualFps() * .10))), maxFramerate: actualFps() },
       degradationPreference: 'balanced',
     });
+    publishedVideoTrack = publication?.track;
+    video.requestFrame?.();
     const sender = publication?.track?.sender;
     if (sender?.getStats && run === generation) {
       let previous, reading = false;
@@ -220,6 +311,9 @@ async function publishCloud(value, run) {
             const elapsed = previous ? (report.timestamp - previous.timestamp) / 1000 : 0;
             if (elapsed > 0 && report.framesEncoded >= previous.framesEncoded) {
               const fps = (report.framesEncoded - previous.framesEncoded) / elapsed;
+              const sent = Number.isFinite(report.framesSent) && Number.isFinite(previous.framesSent) ? (report.framesSent - previous.framesSent) / elapsed : fps;
+              $('#sentFpsLabel').textContent = Number.isFinite(report.framesSent) ? 'Gửi' : 'Mã hoá';
+              $('#sentFps').textContent = `${sent.toFixed(1)} fps`;
               const mbps = (report.bytesSent - previous.bytesSent) * 8 / elapsed / 1000000;
               $('#relayStatus').textContent = `Cloud · ${report.frameWidth || relayCanvas.width}×${report.frameHeight || relayCanvas.height} · ${fps.toFixed(0)} fps · ${mbps.toFixed(1)} Mb/s`;
             }
@@ -230,17 +324,19 @@ async function publishCloud(value, run) {
       }, 2000);
     }
   }
-  if (audio && run === generation) await room.localParticipant.publishTrack(audio, { source: sdk.Track.Source.Microphone });
+  if (audio && run === generation) publishedAudioTrack = (await room.localParticipant.publishTrack(audio, { source: sdk.Track.Source.Microphone }))?.track;
   if (run !== generation) { await room.disconnect(); return; }
   relayRunning = true; $('#relayStatus').textContent = 'Đang phát qua Cloud';
   setConnection(value.state === 'connected');
   void pollStatus(value, run); statusTimer = setInterval(() => { void pollStatus(value, run); }, 3000);
 }
 async function publishUsb(value, run) {
-  relayRunning = true; let frames = 0, measuredAt = performance.now(), consecutiveFailures = 0;
+  relayRunning = true; let frames = 0, measuredAt = performance.now(), consecutiveFailures = 0, lastSequence = -1;
   setConnection(false); statusTimer = setInterval(() => { void pollStatus(value, run); }, 3000);
   while (relayRunning && run === generation && hasSource()) {
     const started = performance.now();
+    if (drawSequence === lastSequence) { await new Promise((resolve) => setTimeout(resolve, 10)); continue; }
+    lastSequence = drawSequence;
     try {
       if (Date.now() >= value.expires * 1000) { $('#relayStatus').textContent = 'Phiên USB hết hạn. Tạo mã mới để tiếp tục.'; break; }
       const blob = await new Promise((resolve) => relayCanvas.toBlob(resolve, 'image/jpeg', .96));
@@ -255,6 +351,8 @@ async function publishUsb(value, run) {
       if (!response.ok) throw new Error('usb_publish_failed');
       consecutiveFailures = 0; frames++;
       if (performance.now() - measuredAt >= 1000) {
+        $('#sentFpsLabel').textContent = 'Gửi';
+        $('#sentFps').textContent = `${(frames * 1000 / (performance.now() - measuredAt)).toFixed(1)} fps`;
         $('#relayStatus').textContent = `Đang phát qua USB · ${(frames * 1000 / (performance.now() - measuredAt)).toFixed(1)} fps`;
         measuredAt = performance.now(); frames = 0;
       }
@@ -298,10 +396,10 @@ function errorMessage(error) {
     : isUsbMode ? 'Chưa nối được USB. Kiểm tra dịch vụ USB và quyền truy cập mạng cục bộ.' : 'Chưa mở được nguồn hoặc phòng Cloud. Hãy thử lại.';
 }
 async function openPairing(replace = false, restart = false) {
-  if (opening || closing || previewOpening || !account) return false;
+  if (opening || closing || previewOpening || settingsApplying || !account) return false;
   opening = true; busy(true);
   const run = ++generation;
-  if (!isUsbMode && !dialog.open) dialog.showModal();
+  if (!isUsbMode && !dialog.open && !restart) dialog.showModal();
   $('#pairingConnection').textContent = 'Đang chuẩn bị nguồn…';
   let obtained;
   try {
@@ -343,7 +441,7 @@ async function closePairing() {
   finally { closing = false; $('#closePairing').disabled = false; }
 }
 async function startPreview(restart = false) {
-  if (opening || closing || previewOpening || !account) return false;
+  if (opening || closing || previewOpening || settingsApplying || !account) return false;
   if (session && restart) return openPairing(false, true);
   previewOpening = true; busy(true);
   const run = ++generation;
@@ -371,7 +469,7 @@ for (const [selector, kind] of [['#copyCode', 'code'], ['#copyPassword', 'passwo
 }
 for (const [selector, usb] of [['#computerSource', false], ['#nearSource', true]]) {
   $(selector).addEventListener('click', async () => {
-    if (opening || closing || isUsbMode === usb) return;
+    if (opening || closing || settingsApplying || isUsbMode === usb) return;
     if (session) { try { await cancelUnused(session); } catch { showSnackbar('Chưa đổi được đường truyền. Hãy thử lại.'); return; } }
     stopSource(); session = undefined; clearInterval(expiryTimer); isUsbMode = usb; updateTransport();
     if (dialog.open) dialog.close();
@@ -379,7 +477,7 @@ for (const [selector, usb] of [['#computerSource', false], ['#nearSource', true]
     if (usb) await openPairing(); else await startPreview();
   });
 }
-for (const control of [outputResolution, outputFps, videoDevice, audioDevice]) control.addEventListener('change', () => { if (hasSource()) showSnackbar('Bấm Đổi / khởi động lại nguồn để áp dụng thay đổi.'); });
+for (const control of [outputResolution, outputFps, videoDevice, audioDevice]) control.addEventListener('change', scheduleSettings);
 $('#logoutButton').addEventListener('click', async () => {
   if (opening || closing) return;
   $('#logoutButton').disabled = true;

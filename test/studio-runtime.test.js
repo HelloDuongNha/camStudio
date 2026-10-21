@@ -66,6 +66,24 @@ test('cleanup attempts every track even if one stop fails', () => {
   assert.equal(stopped, true);
 });
 
+test('output orientation is explicit and source mode preserves native aspect', () => {
+  const runtime = load();
+  assert.equal(JSON.stringify(runtime.outputSize('portrait-source',1920,1080)), JSON.stringify({width:1080,height:1920}));
+  assert.equal(JSON.stringify(runtime.outputSize('landscape-1080',1080,1920)), JSON.stringify({width:1920,height:1080}));
+  assert.equal(JSON.stringify(runtime.outputSize('source',1280,720)), JSON.stringify({width:1280,height:720}));
+});
+
+test('FPS reports observations over elapsed time rather than the requested target', () => {
+  const meter = load().frameMeter(0);
+  for (let n=1;n<=60;n++) meter.source(n);
+  for (let n=0;n<15;n++) meter.drawn();
+  assert.equal(meter.sample(500),null);
+  const observed=meter.sample(2000);
+  assert.equal(observed.source,30);assert.equal(observed.drawn,7.5);
+  meter.source(63);meter.drawn();
+  assert.equal(meter.sample(3000).source,3);
+});
+
 test('responses are explicitly released on every simulated request', async () => {
   const runtime = load();
   let closed = 0;

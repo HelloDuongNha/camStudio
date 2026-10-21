@@ -34,7 +34,31 @@
     try { await response.body?.cancel(); } catch { /* Response is already closed. */ }
   }
 
-  const api = { safeStorage, selectedTransport, stopStream, replaceSource, discardResponse };
+  function outputSize(mode, width, height) {
+    if (mode.startsWith('portrait-')) return { width: 1080, height: 1920 };
+    if (mode.startsWith('landscape-')) return { width: 1920, height: 1080 };
+    return { width: Math.max(2, Math.round(width / 2) * 2), height: Math.max(2, Math.round(height / 2) * 2) };
+  }
+
+  function frameMeter(start) {
+    let since = start, source = 0, drawn = 0, lastPresented;
+    return {
+      source(presented) {
+        source += Number.isFinite(presented) && Number.isFinite(lastPresented) ? Math.max(0, presented - lastPresented) : 1;
+        lastPresented = presented;
+      },
+      drawn() { drawn++; },
+      sample(now) {
+        const elapsed = (now - since) / 1000;
+        if (elapsed < 1) return null;
+        const result = { source: source / elapsed, drawn: drawn / elapsed };
+        since = now; source = 0; drawn = 0;
+        return result;
+      },
+    };
+  }
+
+  const api = { safeStorage, selectedTransport, stopStream, replaceSource, discardResponse, outputSize, frameMeter };
   root.CamStudioRuntime = api;
   if (!root.document) return;
 

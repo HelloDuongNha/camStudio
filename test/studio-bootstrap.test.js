@@ -20,12 +20,12 @@ function fixture({acquire,existing,connected=false,intercept,transport='cloud',c
   for(const match of html.matchAll(/<([a-zA-Z][\w:-]*)\b([^>]*)>/g)) {
     const attrs=Object.fromEntries([...match[2].matchAll(/([\w:-]+)="([^"]*)"/g)].map(item=>[item[1],item[2]]));
     const set=new Set((attrs.class||'').split(/\s+/));
-    const node={id:attrs.id||'',attrs,events:new Map(),style:{},hidden:match[2].includes(' hidden'),value:'',textContent:'',innerHTML:'',open:false,disabled:false,
+    const node={id:attrs.id||'',attrs,events:new Map(),style:{setProperty(name,value){this[name]=value;}},hidden:match[2].includes(' hidden'),value:'',textContent:'',innerHTML:'',open:false,disabled:false,
       classList:{toggle(name,on){if(on??!set.has(name))set.add(name);else set.delete(name);}},
       addEventListener(name,fn){this.events.set(name,fn);},setAttribute(name,value){attrs[name]=value;},getAttribute(name){return attrs[name];},
       showModal(){this.open=true;},close(){this.open=false;},getBoundingClientRect(){return {left:0,top:0,right:1000,bottom:1000};},
       replaceChildren(){},add(){},pause(){},async play(){},videoWidth:1920,videoHeight:1080,
-      getContext:()=>({setTransform(){},clearRect(){},drawImage(){}}),captureStream:()=>source(),toBlob(cb){cb(new Blob(['test-frame']));},
+      getContext:()=>({setTransform(){},clearRect(){},fillRect(){},drawImage(){}}),captureStream:()=>source(),toBlob(cb){cb(new Blob(['test-frame']));},
     };
     if(attrs.id)nodes.set(attrs.id,node); for(const name of set)if(name)classes.set(name,node);
   }
@@ -36,12 +36,12 @@ function fixture({acquire,existing,connected=false,intercept,transport='cloud',c
   const context=vm.createContext({URL,URLSearchParams,AbortController,performance,Blob,btoa,crypto:webcrypto,location,Option:function(text,value){this.textContent=text;this.value=value;},
     document:{documentElement:{dataset:{}},querySelector(selector){return selector.startsWith('#')?nodes.get(selector.slice(1)):classes.get(selector.slice(1));},getElementById:id=>nodes.get(id)},
     localStorage:storage(local),sessionStorage:storage(sessionStorage),history:{replaceState(_a,_b,url){location.href=String(url);}},
-    navigator:{permissions:cameraPermission?{query:async()=>({state:cameraPermission})}:undefined,mediaDevices:{getUserMedia:async()=>{const value=acquire?await acquire():source();streams.push(value);return value;},enumerateDevices:async()=>[]},clipboard:{writeText:async()=>{}},sendBeacon(){}},
+    navigator:{permissions:cameraPermission?{query:async()=>({state:cameraPermission})}:undefined,mediaDevices:{getUserMedia:async(constraints)=>{const value=acquire?await acquire(constraints):source();streams.push(value);return value;},enumerateDevices:async()=>[]},clipboard:{writeText:async()=>{}},sendBeacon(){}},
     setTimeout(fn,ms){const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearTimeout(id){timers.delete(id);},
     setInterval(fn,ms){const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearInterval(id){timers.delete(id);},
     addEventListener:(name,fn)=>events.set(name,fn),qrcode:()=>({addData(value){this.value=value;},make(){},createSvgTag(){return '<svg>test QR</svg>';}}),
     LivekitClient:{RoomEvent:{ParticipantConnected:'participant',Reconnecting:'reconnecting',Reconnected:'reconnected',Disconnected:'disconnected'},Track:{Source:{Camera:'camera',Microphone:'microphone'}},
-      Room:class{constructor(){this.handlers=new Map();this.published=[];this.localParticipant={publishTrack:async(track,options)=>{this.published.push(track);this.publishOptions||=[];this.publishOptions.push(options);}};rooms.push(this);}on(name,fn){this.handlers.set(name,fn);}async connect(){this.connected=true;}async disconnect(stopTracks=true){this.connected=false;this.stopTracks=stopTracks;}}
+      Room:class{constructor(){this.handlers=new Map();this.published=[];this.replacements=[];this.localParticipant={publishTrack:async(track,options)=>{this.published.push(track);this.publishOptions||=[];this.publishOptions.push(options);return {track:{replaceTrack:async next=>{this.replacements.push({kind:track.kind,next});}}};}};rooms.push(this);}on(name,fn){this.handlers.set(name,fn);}async connect(){this.connected=true;}async disconnect(stopTracks=true){this.connected=false;this.stopTracks=stopTracks;}}
     },
     fetch:async(url,init={})=>{
       const data=init.body&&typeof init.body==='string'?JSON.parse(init.body):undefined;calls.push({url,method:init.method||'GET',data});
@@ -139,4 +139,65 @@ test('USB restores the same session after a relay restart without opening a moda
   const registrations=f.calls.filter(c=>c.url.endsWith('/api/sessions'));
   assert.equal(registrations.length,2);assert.equal(registrations[0].data.room,registrations[1].data.room);
   assert.equal(registrations[0].data.token,registrations[1].data.token);assert.equal(f.nodes.get('pairingDialog').open,false);
+});
+
+test('quality dropdowns apply automatically without reopening capture or changing the room',async()=>{
+  const f=fixture({connected:true});await f.settle();await f.run('openPairing()');await f.run('closePairing()');
+  const revision=f.run('session?.revision');
+  f.nodes.get('outputResolution').value='landscape-1080';
+  f.nodes.get('outputResolution').events.get('change')();
+  await f.run('applySettings()');
+  assert.equal(f.nodes.get('relayCanvas').width,1920);assert.equal(f.nodes.get('relayCanvas').height,1080);
+  assert.equal(f.streams.length,1);assert.equal(f.run('session?.revision'),revision);assert.equal(f.rooms.length,1);
+  assert.equal(f.nodes.get('pairingDialog').open,false);assert.equal(f.nodes.get('settingsStatus').textContent,'Đã áp dụng');
+});
+
+test('rapid source selections discard late camera and apply the newest device',async()=>{
+  let resolve, count=0;const pending=new Promise(yes=>{resolve=yes;});
+  const f=fixture({acquire:async()=>++count===2?pending:source()});await f.settle();await f.run('startPreview()');
+  f.nodes.get('videoDevice').value='camera-b';f.nodes.get('videoDevice').events.get('change')();
+  const changing=f.run('applySettings()');
+  f.nodes.get('videoDevice').value='camera-c';f.nodes.get('videoDevice').events.get('change')();
+  const stale=source();resolve(stale);await changing;
+  assert.ok(stale.tracks.every(track=>track.readyState==='ended'));
+  await f.run('applySettings()');
+  assert.equal(f.run('appliedDevices.video'),'camera-c');assert.equal(f.streams.length,3);
+  assert.ok(f.streams[0].tracks.every(track=>track.readyState==='ended'));
+});
+
+test('camera failure retains the working preview and offers retry',async()=>{
+  let count=0;const f=fixture({acquire:async()=>{if(++count>1)throw Object.assign(Error(),{name:'NotReadableError'});return source();}});
+  await f.settle();await f.run('startPreview()');
+  f.nodes.get('videoDevice').value='unavailable';f.nodes.get('videoDevice').events.get('change')();await f.run('applySettings()');
+  assert.ok(f.streams[0].tracks.every(track=>track.readyState==='live'));
+  assert.equal(f.nodes.get('restartSource').hidden,false);
+});
+
+test('camera and microphone change replaces published audio without recreating Cloud room',async()=>{
+  const f=fixture({connected:true});await f.settle();await f.run('openPairing()');await f.run('closePairing()');
+  const revision=f.run('session.revision');
+  f.nodes.get('videoDevice').value='camera-b';f.nodes.get('audioDevice').value='microphone-b';
+  f.nodes.get('videoDevice').events.get('change')();await f.run('applySettings()');
+  assert.equal(f.rooms.length,1);assert.equal(f.run('session.revision'),revision);
+  assert.equal(f.rooms[0].replacements.length,1);assert.equal(f.rooms[0].replacements[0].kind,'audio');
+  assert.ok(f.streams[0].tracks.every(track=>track.readyState==='ended'));
+  assert.ok(f.streams[1].tracks.every(track=>track.readyState==='live'));
+  assert.equal(f.nodes.get('pairingDialog').open,false);
+});
+
+test('source received after stop is disposed and cannot resurrect preview',async()=>{
+  let resolve,count=0;const pending=new Promise(yes=>{resolve=yes;});
+  const f=fixture({acquire:async()=>++count===2?pending:source()});await f.settle();await f.run('startPreview()');
+  f.nodes.get('videoDevice').value='camera-b';f.nodes.get('videoDevice').events.get('change')();const changing=f.run('applySettings()');
+  f.run('stopSource()');const stale=source();resolve(stale);await changing;
+  assert.ok(stale.tracks.every(track=>track.readyState==='ended'));assert.equal(f.nodes.get('sourcePreview').srcObject,null);
+});
+
+test('camera choice changed during permission wait survives device enumeration',async()=>{
+  let resolve,count=0;const pending=new Promise(yes=>{resolve=yes;});
+  const f=fixture({acquire:async()=>++count===1?pending:source()});await f.settle();
+  const starting=f.run('startPreview()');f.nodes.get('videoDevice').value='newest-camera';
+  f.nodes.get('videoDevice').events.get('change')();resolve(source());await starting;
+  assert.equal(f.nodes.get('videoDevice').value,'newest-camera');await f.run('applySettings()');
+  assert.equal(f.run('appliedDevices.video'),'newest-camera');
 });
