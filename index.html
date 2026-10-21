@@ -2,7 +2,7 @@
 <html lang="vi" data-theme="dark">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111116">
-  <title>Cam Studio</title><link rel="stylesheet" href="styles.css?v=studio-auto-18">
+  <title>Cam Studio</title><link rel="stylesheet" href="styles.css?v=studio-fast-19">
 </head>
 <body>
   <aside id="studioRecovery" role="alert" hidden><strong>Studio gặp lỗi tải giao diện.</strong><p>Tải lại để thử lại; nguồn đang mở sẽ dừng.</p><button id="studioReload">Tải lại</button><button id="studioCopyHealth">Sao chép mốc lỗi</button><button id="studioDismiss">Đóng</button><p id="studioHealthStatus"></p></aside>
@@ -21,8 +21,8 @@
         <section class="card source-card"><p class="section-kicker">NGUỒN PHÁT</p><h2>Kết nối của bạn</h2>
           <div class="transport-switch" role="group" aria-label="Đường truyền"><button id="computerSource" class="selected" aria-pressed="true"><strong>Camera / OBS</strong><small>Cloud · từ xa</small></button><button id="nearSource" aria-pressed="false"><strong>Kết nối gần</strong><small>USB · trực tiếp</small></button></div>
           <div class="source-controls"><label>Nguồn hình<select id="videoDevice"><option value="">Tự động chọn camera</option></select></label><label id="audioField">Nguồn tiếng<select id="audioDevice"><option value="">Tự động chọn micro</option></select></label>
-            <div class="quality-controls"><label>Khung hình<select id="outputResolution"><option value="source">Theo camera / OBS</option><option value="landscape-1080">Ngang · 1920 × 1080</option><option value="portrait-source">Dọc · 1080 × 1920</option></select></label><label>FPS tối đa<select id="outputFps"><option value="15">15 fps</option><option value="30" selected>30 fps</option></select></label></div>
-          </div><p id="settingsStatus" class="settings-status" role="status">Thay đổi được áp dụng tự động</p><p class="transport-hint" id="fpsLimit">Cam hiện hỗ trợ tối đa 30 fps qua Cloud. Chưa hỗ trợ 60 fps đầu cuối.</p><p class="transport-hint" id="transportHint">Cloud phát hình và tiếng qua LiveKit.</p>
+            <div class="quality-controls"><label>Khung hình<select id="outputResolution"><option value="source">Theo camera / OBS</option><option value="landscape-1080">Ngang · 1920 × 1080</option><option value="portrait-source">Dọc · 1080 × 1920</option></select></label></div>
+          </div><p id="settingsStatus" class="settings-status" role="status">Thay đổi được áp dụng tự động</p><p class="transport-hint" id="transportHint">Cloud phát hình và tiếng qua LiveKit.</p>
         </section>
         <section class="card connect-card"><p class="section-kicker">GHÉP NỐI THIẾT BỊ</p><h2>Sẵn sàng kết nối?</h2><p id="connectHint">Xem trước nguồn rồi tạo mã Cloud. Chỉ chia sẻ mã với thiết bị của bạn.</p><button class="button primary full-width" id="pairButton">Tạo mã ghép nối <span aria-hidden="true">↗</span></button></section>
       </aside>
@@ -42,6 +42,6 @@
     </div>
   </dialog>
   <div class="snackbar" id="snackbar" role="status" hidden><span id="snackbarText"></span><button id="snackbarAction" aria-label="Đóng thông báo">×</button></div>
-  <script src="studio-runtime.js?v=studio-auto-18"></script><script src="vendor/qrcode.js"></script><script src="vendor/livekit-client.umd.js"></script><script src="app.js?v=studio-auto-18"></script>
+  <script src="studio-runtime.js?v=studio-fast-19"></script><script src="vendor/qrcode.js"></script><script src="vendor/livekit-client.umd.js"></script><script src="app.js?v=studio-fast-19"></script>
 </body>
 </html>

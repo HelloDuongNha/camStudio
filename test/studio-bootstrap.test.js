@@ -29,7 +29,7 @@ function fixture({acquire,existing,connected=false,intercept,transport='cloud',c
     };
     if(attrs.id)nodes.set(attrs.id,node); for(const name of set)if(name)classes.set(name,node);
   }
-  nodes.get('outputResolution').value='portrait-source'; nodes.get('outputFps').value='30';
+  nodes.get('outputResolution').value='portrait-source';
   const local=new Map(), sessionStorage=new Map();
   const storage=(map)=>({getItem:key=>map.get(key)??null,setItem:(key,value)=>map.set(key,value),removeItem:key=>map.delete(key)});
   const location=new URL(`https://studio.test/?transport=${transport}`);location.replace=(value)=>redirects.push(value);location.reload=()=>redirects.push('reload');
@@ -38,7 +38,7 @@ function fixture({acquire,existing,connected=false,intercept,transport='cloud',c
     localStorage:storage(local),sessionStorage:storage(sessionStorage),history:{replaceState(_a,_b,url){location.href=String(url);}},
     navigator:{permissions:cameraPermission?{query:async()=>({state:cameraPermission})}:undefined,mediaDevices:{getUserMedia:async(constraints)=>{const value=acquire?await acquire(constraints):source();streams.push(value);return value;},enumerateDevices:async()=>[]},clipboard:{writeText:async()=>{}},sendBeacon(){}},
     setTimeout(fn,ms){const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearTimeout(id){timers.delete(id);},
-    setInterval(fn,ms){const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearInterval(id){timers.delete(id);},
+    setInterval(fn,ms){const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearInterval(id){timers.delete(id);},requestAnimationFrame(fn){const id=++nextTimer;timers.set(id,{fn,ms:16});return id;},cancelAnimationFrame(id){timers.delete(id);},
     addEventListener:(name,fn)=>events.set(name,fn),qrcode:()=>({addData(value){this.value=value;},make(){},createSvgTag(){return '<svg>test QR</svg>';}}),
     LivekitClient:{RoomEvent:{ParticipantConnected:'participant',Reconnecting:'reconnecting',Reconnected:'reconnected',Disconnected:'disconnected'},Track:{Source:{Camera:'camera',Microphone:'microphone'}},
       Room:class{constructor(){this.handlers=new Map();this.published=[];this.replacements=[];this.localParticipant={publishTrack:async(track,options)=>{this.published.push(track);this.publishOptions||=[];this.publishOptions.push(options);return {track:{replaceTrack:async next=>{this.replacements.push({kind:track.kind,next});}}};}};rooms.push(this);}on(name,fn){this.handlers.set(name,fn);}async connect(){this.connected=true;}async disconnect(stopTracks=true){this.connected=false;this.stopTracks=stopTracks;}}
@@ -127,10 +127,10 @@ test('USB startup connects directly without QR or modal',async()=>{
   assert.equal(f.streams.length,1);assert.equal(f.nodes.get('pairingDialog').open,false);
   assert.equal(f.nodes.get('qrCode').innerHTML,'');assert.equal(f.calls.filter(c=>c.url.endsWith('/api/sessions')).length,1);
 });
-test('Cloud publishes one full resolution encoding with explicit bitrate and framerate',async()=>{
+test('Cloud publishes one full resolution encoding without an application FPS ceiling',async()=>{
   const f=fixture();await f.settle();await f.run('openPairing()');
   const options=f.rooms[0].publishOptions[0];assert.equal(options.simulcast,false);assert.equal(options.videoCodec,'h264');
-  assert.ok(options.videoEncoding.maxBitrate>=6000000);assert.equal(options.videoEncoding.maxFramerate,30);
+  assert.ok(options.videoEncoding.maxBitrate>=6000000);assert.equal(options.videoEncoding.maxFramerate,undefined);
 });
 test('USB restores the same session after a relay restart without opening a modal',async()=>{
   let firstFrame=true;
@@ -200,4 +200,21 @@ test('camera choice changed during permission wait survives device enumeration',
   f.nodes.get('videoDevice').events.get('change')();resolve(source());await starting;
   assert.equal(f.nodes.get('videoDevice').value,'newest-camera');await f.run('applySettings()');
   assert.equal(f.run('appliedDevices.video'),'newest-camera');
+});
+
+test('source maximum capability is requested and every arriving frame is rendered without FPS ceiling',async()=>{
+  const media=source(),constraints=[];
+  media.getVideoTracks()[0].getCapabilities=()=>({frameRate:{min:1,max:120}});
+  media.getVideoTracks()[0].applyConstraints=async value=>constraints.push(value);
+  const f=fixture({acquire:async()=>media});await f.settle();
+  let callback;
+  f.nodes.get('sourcePreview').requestVideoFrameCallback=fn=>{callback=fn;return 1;};
+  f.nodes.get('sourcePreview').cancelVideoFrameCallback=()=>{};
+  await f.run('startPreview()');
+  assert.equal(constraints[0].frameRate.ideal,120);
+  const initial=f.run('drawSequence');
+  for(let n=1;n<=120;n++) callback(n*1000/120,{presentedFrames:n});
+  assert.equal(f.run('drawSequence')-initial,120);
+  assert.equal(f.nodes.has('outputFps'),false);
+  f.run('stopSource()');
 });

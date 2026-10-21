@@ -372,7 +372,7 @@ select option { background:var(--surface); color:var(--text); }
 .transport-switch button:hover:not(:disabled) { background:var(--surface-alt); }
 .quality-controls {
   display:grid;
-  grid-template-columns:minmax(0,1.5fr) minmax(110px,1fr);
+  grid-template-columns:minmax(0,1fr);
   gap:10px;
 }
 .transport-hint {

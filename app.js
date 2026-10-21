@@ -5,7 +5,7 @@ const $ = (selector) => document.querySelector(selector);
 const USB_ORIGIN = 'http://127.0.0.1:4173';
 const USB_STORAGE = 'camstudio-usb-session-v2';
 const videoPreview = $('#sourcePreview'), relayCanvas = $('#relayCanvas'), dialog = $('#pairingDialog');
-const outputResolution = $('#outputResolution'), outputFps = $('#outputFps');
+const outputResolution = $('#outputResolution');
 const videoDevice = $('#videoDevice'), audioDevice = $('#audioDevice');
 let isUsbMode = runtime.selectedTransport(location.search, localStore.getItem('camstudio-transport-v1')) === 'usb';
 let account, activeStream, liveKitRoom, canvasStream, session;
@@ -16,7 +16,14 @@ let previewOpening = false;
 let settingsTimer, settingsRevision = 0, settingsApplying = false, settingsPending = false;
 let appliedDevices, publishedAudioTrack, publishedVideoTrack;
 let drawSequence = 0, meter = runtime.frameMeter(performance.now()), metricsTimer;
-const actualFps = () => Math.min(isUsbMode ? 15 : 30, Number(outputFps.value) || 30, sourceFrameRate || 30);
+// Ask for the device's supported maximum, without imposing an application FPS ceiling.
+async function maximizeSourceRate(track) {
+  const maximum = track?.getCapabilities?.().frameRate?.max;
+  if (Number.isFinite(maximum) && maximum > 0) {
+    await track.applyConstraints({ frameRate: { ideal: maximum } }).catch(() => {});
+  }
+}
+const encodingBitrate = () => Math.max(2500000, Math.round(relayCanvas.width * relayCanvas.height * sourceFrameRate * .10));
 
 function showSnackbar(text) {
   clearTimeout(snackbarTimer); $('#snackbarText').textContent = text; $('#snackbar').hidden = false;
@@ -43,10 +50,6 @@ async function jsonRequest(url, method, data) {
   return response.json();
 }
 function updateTransport() {
-  const limit = isUsbMode ? 15 : 30;
-  outputFps.value = String(Math.min(Number(outputFps.value) || 30, limit));
-  for (const option of outputFps.options || []) option.disabled = Number(option.value) > limit;
-  $('#fpsLimit').textContent = `Cam hiện hỗ trợ tối đa ${limit} fps qua ${isUsbMode ? 'USB' : 'Cloud'}. Chưa hỗ trợ 60 fps đầu cuối.`;
   $('#computerSource').classList.toggle('selected', !isUsbMode); $('#nearSource').classList.toggle('selected', isUsbMode);
   $('#computerSource').setAttribute('aria-pressed', String(!isUsbMode)); $('#nearSource').setAttribute('aria-pressed', String(isUsbMode));
   $('#audioField').hidden = isUsbMode;
@@ -78,7 +81,7 @@ function stopPublishing() {
 function stopSource() {
   generation++;
   stopPublishing();
-  clearInterval(previewTimer); previewTimer = undefined;
+  cancelAnimationFrame(previewTimer); previewTimer = undefined;
   if (previewFrameCallback !== undefined) videoPreview.cancelVideoFrameCallback?.(previewFrameCallback);
   previewFrameCallback = undefined;
   clearInterval(metricsTimer); metricsTimer = undefined;
@@ -118,18 +121,26 @@ function configureCanvas(track) {
     $('#sourceFps').textContent = videoPreview.requestVideoFrameCallback ? `${sample.source.toFixed(1)} fps` : 'Không có số đo';
     $('#renderFps').textContent = `${sample.drawn.toFixed(1)} fps`;
   }, 1100);
-  drawRelayFrame(); clearInterval(previewTimer);
+  drawRelayFrame(); cancelAnimationFrame(previewTimer);
   if (previewFrameCallback !== undefined) videoPreview.cancelVideoFrameCallback?.(previewFrameCallback);
   if (videoPreview.requestVideoFrameCallback) {
-    let lastDraw = 0;
     const drawNext = (now, metadata) => {
       if (!hasSource()) return;
       meter.source(metadata?.presentedFrames);
-      if (now - lastDraw >= 1000 / actualFps() - 2) { drawRelayFrame(); lastDraw = now; }
+      drawRelayFrame();
       previewFrameCallback = videoPreview.requestVideoFrameCallback(drawNext);
     };
     previewFrameCallback = videoPreview.requestVideoFrameCallback(drawNext);
-  } else previewTimer = setInterval(drawRelayFrame, 1000 / actualFps());
+  } else {
+    let lastFrame = -1;
+    const drawNext = () => {
+      if (!hasSource()) return;
+      const frame = videoPreview.getVideoPlaybackQuality?.().totalVideoFrames ?? videoPreview.currentTime;
+      if (frame !== lastFrame) { lastFrame = frame; drawRelayFrame(); }
+      previewTimer = requestAnimationFrame(drawNext);
+    };
+    previewTimer = requestAnimationFrame(drawNext);
+  }
 }
 async function populateDevices(videoId = '', audioId = '', selectionRevision = settingsRevision) {
   const devices = await navigator.mediaDevices.enumerateDevices();
@@ -148,10 +159,12 @@ async function ensureSource(run) {
   const selectionRevision = settingsRevision;
   const constraints = { video: {
     width: { ideal: 1920 }, height: { ideal: 1080 },
-    ...(videoId ? { deviceId: { exact: videoId } } : {}), frameRate: { ideal: Number(outputFps.value) },
+    ...(videoId ? { deviceId: { exact: videoId } } : {}),
     resizeMode: { ideal: 'none' },
   }, audio: isUsbMode ? false : audioId ? { deviceId: { exact: audioId } } : true };
   const next = await navigator.mediaDevices.getUserMedia(constraints);
+  if (run !== generation) { runtime.stopStream(next); throw new Error('cancelled'); }
+  await maximizeSourceRate(next.getVideoTracks()[0]);
   if (run !== generation) { runtime.stopStream(next); throw new Error('cancelled'); }
   activeStream = next;
   appliedDevices = { video: videoId, audio: audioId };
@@ -182,8 +195,10 @@ async function applySettings() {
     if (selection.video !== appliedDevices?.video || (!isUsbMode && selection.audio !== appliedDevices?.audio)) {
       next = await navigator.mediaDevices.getUserMedia({ video: {
         ...(selection.video ? { deviceId: { exact: selection.video } } : {}),
-        width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: Number(outputFps.value) },
+        width: { ideal: 1920 }, height: { ideal: 1080 },
       }, audio: isUsbMode ? false : selection.audio ? { deviceId: { exact: selection.audio } } : true });
+      if (revision !== settingsRevision || run !== generation) { runtime.stopStream(next); return; }
+      await maximizeSourceRate(next.getVideoTracks()[0]);
       if (revision !== settingsRevision || run !== generation) { runtime.stopStream(next); return; }
       videoPreview.srcObject = next; await videoPreview.play();
       if (revision !== settingsRevision || run !== generation) {
@@ -198,7 +213,6 @@ async function applySettings() {
       }));
       runtime.stopStream(previous);
     } else {
-      await previous.getVideoTracks()[0]?.applyConstraints?.({ frameRate: { ideal: Number(outputFps.value) } });
       if (revision !== settingsRevision || run !== generation) return;
     }
     configureCanvas(activeStream.getVideoTracks()[0]);
@@ -206,8 +220,8 @@ async function applySettings() {
     if (sender?.getParameters && sender?.setParameters) {
       const parameters = sender.getParameters();
       for (const encoding of parameters.encodings || []) {
-        encoding.maxFramerate = actualFps();
-        encoding.maxBitrate = Math.min(12000000, Math.max(2500000, Math.round(relayCanvas.width * relayCanvas.height * actualFps() * .10)));
+        delete encoding.maxFramerate;
+        encoding.maxBitrate = encodingBitrate();
       }
       await sender.setParameters(parameters);
     }
@@ -285,14 +299,14 @@ async function publishCloud(value, run) {
   if (run !== generation) { await room.disconnect(); return; }
   canvasStream = relayCanvas.captureStream(0);
   if (!canvasStream.getVideoTracks()[0]?.requestFrame) {
-    runtime.stopStream(canvasStream); canvasStream = relayCanvas.captureStream(30);
+    runtime.stopStream(canvasStream); canvasStream = relayCanvas.captureStream();
   }
   const video = canvasStream.getVideoTracks()[0], audio = activeStream?.getAudioTracks()[0];
   if (video) {
     video.contentHint = 'motion';
     const publication = await room.localParticipant.publishTrack(video, {
       source: sdk.Track.Source.Camera, simulcast: false, videoCodec: 'h264',
-      videoEncoding: { maxBitrate: Math.min(12000000, Math.max(2500000, Math.round(relayCanvas.width * relayCanvas.height * actualFps() * .10))), maxFramerate: actualFps() },
+      videoEncoding: { maxBitrate: encodingBitrate() },
       degradationPreference: 'balanced',
     });
     publishedVideoTrack = publication?.track;
@@ -334,7 +348,6 @@ async function publishUsb(value, run) {
   relayRunning = true; let frames = 0, measuredAt = performance.now(), consecutiveFailures = 0, lastSequence = -1;
   setConnection(false); statusTimer = setInterval(() => { void pollStatus(value, run); }, 3000);
   while (relayRunning && run === generation && hasSource()) {
-    const started = performance.now();
     if (drawSequence === lastSequence) { await new Promise((resolve) => setTimeout(resolve, 10)); continue; }
     lastSequence = drawSequence;
     try {
@@ -357,7 +370,7 @@ async function publishUsb(value, run) {
         measuredAt = performance.now(); frames = 0;
       }
     } catch { consecutiveFailures++; $('#relayStatus').textContent = 'Chưa gửi được qua USB · đang thử lại…'; }
-    await new Promise((resolve) => setTimeout(resolve, consecutiveFailures ? 500 : Math.max(0, 1000 / actualFps() - (performance.now() - started))));
+    if (consecutiveFailures) await new Promise((resolve) => setTimeout(resolve, 500));
   }
 }
 async function usbSession(replace) {
@@ -477,7 +490,7 @@ for (const [selector, usb] of [['#computerSource', false], ['#nearSource', true]
     if (usb) await openPairing(); else await startPreview();
   });
 }
-for (const control of [outputResolution, outputFps, videoDevice, audioDevice]) control.addEventListener('change', scheduleSettings);
+for (const control of [outputResolution, videoDevice, audioDevice]) control.addEventListener('change', scheduleSettings);
 $('#logoutButton').addEventListener('click', async () => {
   if (opening || closing) return;
   $('#logoutButton').disabled = true;
