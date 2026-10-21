@@ -11,11 +11,11 @@ const user={id:'test-user',email:'user@example.test'};
 const room=(revision='revision-one')=>({ownerId:user.id,code:'ABCDEF',room:'ABCDEF',password:'ABCDEFGHJK',transport:'livekit',revision,expires:Math.floor(Date.now()/1000)+3600,state:'waiting'});
 const ok=(body,status=200)=>({ok:status>=200&&status<300,status,json:async()=>body});
 function source() {
-  const tracks=[{kind:'video'},{kind:'audio'}].map((track)=>({...track,readyState:'live',stops:0,stop(){this.stops++;this.readyState='ended';},addEventListener(){},getSettings:()=>({width:1920,height:1080,frameRate:30,deviceId:''})}));
+  const tracks=[{kind:'video'},{kind:'audio'}].map((track)=>({...track,readyState:'live',enabled:true,stops:0,stop(){this.stops++;this.readyState='ended';},addEventListener(){},getSettings:()=>({width:1920,height:1080,frameRate:30,deviceId:''})}));
   return {tracks,getTracks:()=>tracks,getVideoTracks:()=>tracks.filter(t=>t.kind==='video'),getAudioTracks:()=>tracks.filter(t=>t.kind==='audio')};
 }
 function fixture({acquire,existing,connected=false,intercept,transport='cloud',cameraPermission}={}) {
-  const nodes=new Map(), classes=new Map(), events=new Map(), timers=new Map(), calls=[], redirects=[], streams=[], rooms=[];
+  const nodes=new Map(), classes=new Map(), events=new Map(), timers=new Map(), draws=[], calls=[], redirects=[], streams=[], rooms=[];
   let nextTimer=0, saved=existing;
   for(const match of html.matchAll(/<([a-zA-Z][\w:-]*)\b([^>]*)>/g)) {
     const attrs=Object.fromEntries([...match[2].matchAll(/([\w:-]+)="([^"]*)"/g)].map(item=>[item[1],item[2]]));
@@ -25,7 +25,7 @@ function fixture({acquire,existing,connected=false,intercept,transport='cloud',c
       addEventListener(name,fn){this.events.set(name,fn);},setAttribute(name,value){attrs[name]=value;},getAttribute(name){return attrs[name];},
       showModal(){this.open=true;},close(){this.open=false;},getBoundingClientRect(){return {left:0,top:0,right:1000,bottom:1000};},
       replaceChildren(){},add(){},pause(){},async play(){},videoWidth:1920,videoHeight:1080,
-      getContext:()=>({setTransform(){},clearRect(){},fillRect(){},drawImage(){}}),captureStream:()=>source(),toBlob(cb){cb(new Blob(['test-frame']));},
+      getContext:()=>({setTransform(){},clearRect(){},fillRect(){},drawImage(...args){draws.push(args);}}),captureStream:()=>source(),toBlob(cb){cb(new Blob(['test-frame']));},
     };
     if(attrs.id)nodes.set(attrs.id,node); for(const name of set)if(name)classes.set(name,node);
   }
@@ -41,7 +41,7 @@ function fixture({acquire,existing,connected=false,intercept,transport='cloud',c
     setInterval(fn,ms){const id=++nextTimer;timers.set(id,{fn,ms});return id;},clearInterval(id){timers.delete(id);},requestAnimationFrame(fn){const id=++nextTimer;timers.set(id,{fn,ms:16});return id;},cancelAnimationFrame(id){timers.delete(id);},
     addEventListener:(name,fn)=>events.set(name,fn),qrcode:()=>({addData(value){this.value=value;},make(){},createSvgTag(){return '<svg>test QR</svg>';}}),
     LivekitClient:{RoomEvent:{ParticipantConnected:'participant',Reconnecting:'reconnecting',Reconnected:'reconnected',Disconnected:'disconnected'},Track:{Source:{Camera:'camera',Microphone:'microphone'}},
-      Room:class{constructor(){this.handlers=new Map();this.published=[];this.replacements=[];this.localParticipant={publishTrack:async(track,options)=>{this.published.push(track);this.publishOptions||=[];this.publishOptions.push(options);return {track:{replaceTrack:async next=>{this.replacements.push({kind:track.kind,next});}}};}};rooms.push(this);}on(name,fn){this.handlers.set(name,fn);}async connect(){this.connected=true;}async disconnect(stopTracks=true){this.connected=false;this.stopTracks=stopTracks;}}
+      Room:class{constructor(){this.handlers=new Map();this.published=[];this.replacements=[];this.localParticipant={publishTrack:async(track,options)=>{this.published.push(track);this.publishOptions||=[];this.publishOptions.push(options);const publication={isMuted:false,mediaStreamTrack:track,async mute(){this.isMuted=true;this.mediaStreamTrack.enabled=false;},async unmute(){this.isMuted=false;this.mediaStreamTrack.enabled=true;},replaceTrack:async next=>{this.replacements.push({kind:track.kind,next});publication.mediaStreamTrack=next;next.enabled=!publication.isMuted;}};return {track:publication};}};rooms.push(this);}on(name,fn){this.handlers.set(name,fn);}async connect(){this.connected=true;}async disconnect(stopTracks=true){this.connected=false;this.stopTracks=stopTracks;}}
     },
     fetch:async(url,init={})=>{
       const data=init.body&&typeof init.body==='string'?JSON.parse(init.body):undefined;calls.push({url,method:init.method||'GET',data});
@@ -62,7 +62,7 @@ function fixture({acquire,existing,connected=false,intercept,transport='cloud',c
     },
   });context.window=context;
   vm.runInContext(runtime,context);vm.runInContext(app,context);
-  return {run:code=>vm.runInContext(code,context),context,nodes,calls,streams,rooms,redirects,events,settle:()=>new Promise(resolve=>setImmediate(resolve))};
+  return {run:code=>vm.runInContext(code,context),context,nodes,calls,draws,streams,rooms,redirects,events,settle:()=>new Promise(resolve=>setImmediate(resolve))};
 }
 
 test('create pairing starts camera and publishes automatically without a second action',async()=>{
@@ -217,4 +217,41 @@ test('source maximum capability is requested and every arriving frame is rendere
   assert.equal(f.run('drawSequence')-initial,120);
   assert.equal(f.nodes.has('outputFps'),false);
   f.run('stopSource()');
+});
+
+test('microphone mute survives publishing, device replacement, and reopening the source',async()=>{
+  const f=fixture();await f.settle();await f.run('startPreview()');
+  await f.run('toggleMicrophone()');
+  assert.equal(f.streams[0].getAudioTracks()[0].enabled,false);
+  assert.equal(f.nodes.get('muteMicrophone').attrs['aria-label'],'Bật micro');
+  await f.run('openPairing()');
+  assert.equal(f.run('publishedAudioTrack.isMuted'),true);
+  f.nodes.get('audioDevice').value='second-microphone';
+  f.run('settingsPending=true');await f.run('applySettings()');
+  assert.equal(f.streams[1].getAudioTracks()[0].enabled,false);
+  assert.equal(f.rooms.length,1);
+  await f.run('toggleMicrophone()');
+  assert.equal(f.streams[1].getAudioTracks()[0].enabled,true);
+  assert.equal(f.run('publishedAudioTrack.isMuted'),false);
+  await f.run('toggleMicrophone()');f.run('stopSource()');await f.run('startPreview()');
+  assert.equal(f.streams.at(-1).getAudioTracks()[0].enabled,false);
+});
+test('microphone failure stays muted and USB does not offer an unavailable audio button',async()=>{
+  const f=fixture();await f.settle();await f.run('openPairing()');await f.run('toggleMicrophone()');
+  f.run('publishedAudioTrack.unmute=async()=>{throw new Error("unavailable")}');
+  await f.run('toggleMicrophone()');
+  assert.equal(f.streams[0].getAudioTracks()[0].enabled,false);
+  assert.equal(f.nodes.get('muteMicrophone').attrs['aria-pressed'],'true');
+  const usb=fixture({transport:'usb'});await usb.settle();
+  assert.equal(usb.nodes.get('muteMicrophone').hidden,true);
+});
+test('portrait covers the output canvas while source mode preserves the full image',async()=>{
+  const f=fixture();await f.settle();await f.run('startPreview()');
+  const portrait=f.draws.at(-1),canvas=f.nodes.get('relayCanvas');
+  assert.ok(portrait[1]<0);assert.equal(portrait[2],0);
+  assert.ok(portrait[3]>canvas.width);assert.equal(portrait[4],canvas.height);
+  f.nodes.get('outputResolution').value='source';f.run('configureCanvas(activeStream.getVideoTracks()[0])');
+  const native=f.draws.at(-1);
+  assert.equal(native[1],0);assert.equal(native[2],0);
+  assert.equal(native[3],1920);assert.equal(native[4],1080);
 });

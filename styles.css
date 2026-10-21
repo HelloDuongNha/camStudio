@@ -365,8 +365,19 @@ select:disabled { opacity:.55; cursor:not-allowed; }
 select option { background:var(--surface); color:var(--text); }
 .source-controls,.source-controls label,.quality-controls { min-width:0; }
 .settings-status { color:var(--green); font-size:12px; margin-top:14px; min-height:18px; }
-.preview-metrics { display:flex; gap:20px; flex-wrap:wrap; padding-top:18px; color:var(--muted); font-size:12px; }
-.preview-metrics strong { color:var(--text); margin-left:5px; font-weight:600; font-variant-numeric:tabular-nums; }
+.preview-metrics { position:absolute; top:10px; right:10px; z-index:2; display:flex; flex-direction:column; gap:3px; padding:6px 8px; border:1px solid #ffffff16; border-radius:9px; background:#14131bcc; backdrop-filter:blur(8px); color:#f5f3fa; font-size:10px; pointer-events:auto; }
+.preview-metrics>span { display:flex; align-items:center; gap:5px; }
+.preview-metrics svg,.preview-mic svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex-shrink:0; }
+.preview-metrics strong { font-weight:500; font-variant-numeric:tabular-nums; }
+.metric-receive svg { color:#79dfa9; }
+.metric-display svg { color:#ccc1ff; }
+.metric-send svg { color:#85c9ff; }
+.preview-mic { position:absolute; bottom:10px; right:10px; z-index:2; width:38px; height:38px; display:grid; place-items:center; border:1px solid #ffffff26; border-radius:12px; color:#f5f3fa; background:#14131bcc; backdrop-filter:blur(8px); cursor:pointer; }
+.preview-mic svg { width:19px; height:19px; }
+.preview-mic[aria-pressed="true"] { color:#ff929c; border-color:#ff929c66; }
+.preview-mic:disabled { opacity:.45; cursor:default; }
+.preview-mic:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+.visually-hidden { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .preview-footer .button { padding:9px 13px; border-radius:10px; }
 .transport-switch button { transition:background .15s,border-color .15s; border-radius:12px; }
 .transport-switch button:hover:not(:disabled) { background:var(--surface-alt); }

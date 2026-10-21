@@ -13,6 +13,7 @@ let previewTimer, statusTimer, qualityTimer, expiryTimer, snackbarTimer;
 let generation = 0, opening = false, closing = false, publishTask, relayRunning = false;
 let sourceFrameRate = 30, previewFrameCallback;
 let previewOpening = false;
+let microphoneMuted = false, microphoneChanging = false;
 let settingsTimer, settingsRevision = 0, settingsApplying = false, settingsPending = false;
 let appliedDevices, publishedAudioTrack, publishedVideoTrack;
 let drawSequence = 0, meter = runtime.frameMeter(performance.now()), metricsTimer;
@@ -24,6 +25,38 @@ async function maximizeSourceRate(track) {
   }
 }
 const encodingBitrate = () => Math.max(2500000, Math.round(relayCanvas.width * relayCanvas.height * sourceFrameRate * .10));
+
+function applyMicrophoneState(stream = activeStream) {
+  stream?.getAudioTracks().forEach((track) => { track.enabled = !microphoneMuted; });
+}
+function updateMicrophoneButton() {
+  const button = $('#muteMicrophone');
+  button.hidden = isUsbMode;
+  button.disabled = microphoneChanging || settingsApplying || !activeStream?.getAudioTracks().some((track) => track.readyState === 'live');
+  button.setAttribute('aria-pressed', String(microphoneMuted));
+  button.setAttribute('aria-label', microphoneMuted ? 'Bật micro' : 'Tắt micro');
+  button.setAttribute('title', microphoneMuted ? 'Bật micro' : 'Tắt micro');
+  $('#microphoneOn').hidden = microphoneMuted;
+  $('#microphoneOff').hidden = !microphoneMuted;
+}
+async function toggleMicrophone() {
+  if ($('#muteMicrophone').disabled || isUsbMode) return;
+  microphoneChanging = true;
+  const wanted = !microphoneMuted;
+  microphoneMuted = wanted;
+  applyMicrophoneState(); updateMicrophoneButton();
+  try {
+    if (wanted) await publishedAudioTrack?.mute?.();
+    else await publishedAudioTrack?.unmute?.();
+  } catch {
+    microphoneMuted = true;
+    await publishedAudioTrack?.mute?.().catch(() => {});
+    showSnackbar('Micro đang tắt. Chưa bật lại được, hãy thử lại.');
+  } finally {
+    microphoneChanging = false;
+    applyMicrophoneState(); updateMicrophoneButton();
+  }
+}
 
 function showSnackbar(text) {
   clearTimeout(snackbarTimer); $('#snackbarText').textContent = text; $('#snackbar').hidden = false;
@@ -53,6 +86,7 @@ function updateTransport() {
   $('#computerSource').classList.toggle('selected', !isUsbMode); $('#nearSource').classList.toggle('selected', isUsbMode);
   $('#computerSource').setAttribute('aria-pressed', String(!isUsbMode)); $('#nearSource').setAttribute('aria-pressed', String(isUsbMode));
   $('#audioField').hidden = isUsbMode;
+  updateMicrophoneButton();
   $('#transportHint').textContent = isUsbMode ? 'USB trực tiếp. Mở dịch vụ USB trên máy tính và cắm điện thoại.' : 'Cloud phát hình và tiếng qua LiveKit.';
   $('#passwordCard').hidden = isUsbMode;
   $('#pairButton').textContent = isUsbMode ? 'Kết nối USB' : 'Tạo mã ghép nối ↗';
@@ -62,6 +96,7 @@ function updateTransport() {
 }
 function busy(value) {
   $('#previewButton').disabled = value;
+  $('#muteMicrophone').disabled = value || microphoneChanging || !activeStream?.getAudioTracks().some((track) => track.readyState === 'live');
   $('#pairButton').disabled = value; $('#newPairing').disabled = value; $('#restartSource').disabled = value;
   $('#computerSource').disabled = value; $('#nearSource').disabled = value;
   for (const selector of ['#copyCode', '#copyPassword', '#copyPairing']) $(selector).disabled = value;
@@ -90,12 +125,13 @@ function stopSource() {
   runtime.stopStream(activeStream); activeStream = undefined;
   videoPreview.srcObject = null; relayCanvas.hidden = true;
   $('.preview-empty').hidden = false; $('#restartSource').hidden = true;
+  updateMicrophoneButton();
   $('#previewResolution').textContent = 'Chưa có nguồn'; $('#relayStatus').textContent = 'Chưa phát dữ liệu';
 }
 function drawRelayFrame() {
   if (!videoPreview.videoWidth || !videoPreview.videoHeight) return;
   const context = relayCanvas.getContext('2d', { alpha: false });
-  const scale = Math.min(relayCanvas.width / videoPreview.videoWidth, relayCanvas.height / videoPreview.videoHeight);
+  const scale = (outputResolution.value === 'portrait-source' ? Math.max : Math.min)(relayCanvas.width / videoPreview.videoWidth, relayCanvas.height / videoPreview.videoHeight);
   context.imageSmoothingEnabled = true; context.imageSmoothingQuality = 'high';
   context.setTransform(1, 0, 0, 1, 0, 0); context.fillStyle = '#000'; context.fillRect(0, 0, relayCanvas.width, relayCanvas.height);
   context.drawImage(videoPreview, (relayCanvas.width - videoPreview.videoWidth * scale) / 2,
@@ -164,9 +200,10 @@ async function ensureSource(run) {
   }, audio: isUsbMode ? false : audioId ? { deviceId: { exact: audioId } } : true };
   const next = await navigator.mediaDevices.getUserMedia(constraints);
   if (run !== generation) { runtime.stopStream(next); throw new Error('cancelled'); }
+  applyMicrophoneState(next);
   await maximizeSourceRate(next.getVideoTracks()[0]);
   if (run !== generation) { runtime.stopStream(next); throw new Error('cancelled'); }
-  activeStream = next;
+  activeStream = next; updateMicrophoneButton();
   appliedDevices = { video: videoId, audio: audioId };
   next.getTracks().forEach((track) => track.addEventListener?.('ended', () => {
     if (activeStream === next) { stopSource(); showSnackbar('Nguồn đã dừng. Bấm Mở xem trước để thử lại.'); }
@@ -183,7 +220,7 @@ async function ensureSource(run) {
 
 async function applySettings() {
   if (!settingsPending || settingsApplying) return;
-  if (opening || closing || previewOpening) { settingsTimer = setTimeout(applySettings, 100); return; }
+  if (opening || closing || previewOpening || microphoneChanging) { settingsTimer = setTimeout(applySettings, 100); return; }
   settingsPending = false;
   if (!hasSource()) return;
   settingsApplying = true; busy(true);
@@ -198,6 +235,7 @@ async function applySettings() {
         width: { ideal: 1920 }, height: { ideal: 1080 },
       }, audio: isUsbMode ? false : selection.audio ? { deviceId: { exact: selection.audio } } : true });
       if (revision !== settingsRevision || run !== generation) { runtime.stopStream(next); return; }
+      applyMicrophoneState(next);
       await maximizeSourceRate(next.getVideoTracks()[0]);
       if (revision !== settingsRevision || run !== generation) { runtime.stopStream(next); return; }
       videoPreview.srcObject = next; await videoPreview.play();
@@ -237,6 +275,7 @@ async function applySettings() {
     showSnackbar(error.name === 'NotAllowedError' ? 'Chưa có quyền dùng nguồn mới.' : 'Chưa đổi được nguồn. Chọn lại để thử.');
   } finally {
     settingsApplying = false; busy(false);
+    applyMicrophoneState(); updateMicrophoneButton();
     if (settingsPending || revision !== settingsRevision) { settingsPending = true; settingsTimer = setTimeout(applySettings, 0); }
   }
 }
@@ -338,7 +377,12 @@ async function publishCloud(value, run) {
       }, 2000);
     }
   }
-  if (audio && run === generation) publishedAudioTrack = (await room.localParticipant.publishTrack(audio, { source: sdk.Track.Source.Microphone }))?.track;
+  if (audio && run === generation) {
+    applyMicrophoneState();
+    publishedAudioTrack = (await room.localParticipant.publishTrack(audio, { source: sdk.Track.Source.Microphone }))?.track;
+    if (microphoneMuted) await publishedAudioTrack?.mute?.();
+    applyMicrophoneState(); updateMicrophoneButton();
+  }
   if (run !== generation) { await room.disconnect(); return; }
   relayRunning = true; $('#relayStatus').textContent = 'Đang phát qua Cloud';
   setConnection(value.state === 'connected');
@@ -491,6 +535,7 @@ for (const [selector, usb] of [['#computerSource', false], ['#nearSource', true]
   });
 }
 for (const control of [outputResolution, videoDevice, audioDevice]) control.addEventListener('change', scheduleSettings);
+$('#muteMicrophone').addEventListener('click', toggleMicrophone);
 $('#logoutButton').addEventListener('click', async () => {
   if (opening || closing) return;
   $('#logoutButton').disabled = true;
