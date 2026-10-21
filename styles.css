@@ -365,7 +365,8 @@ select:disabled { opacity:.55; cursor:not-allowed; }
 select option { background:var(--surface); color:var(--text); }
 .source-controls,.source-controls label,.quality-controls { min-width:0; }
 .settings-status { color:var(--green); font-size:12px; margin-top:14px; min-height:18px; }
-.preview-metrics { position:absolute; top:10px; right:10px; z-index:2; display:flex; flex-direction:column; gap:3px; padding:6px 8px; border:1px solid #ffffff16; border-radius:9px; background:#14131bcc; backdrop-filter:blur(8px); color:#f5f3fa; font-size:10px; pointer-events:auto; }
+.preview-toolbar { display:flex; justify-content:flex-end; margin:0 0 10px; min-width:0; }
+.preview-metrics { display:flex; flex-direction:row; flex-wrap:wrap; justify-content:flex-end; gap:10px; padding:5px 8px; border:1px solid #ffffff16; border-radius:9px; background:#14131bcc; backdrop-filter:blur(8px); color:#f5f3fa; font-size:10px; pointer-events:auto; }
 .preview-metrics>span { display:flex; align-items:center; gap:5px; }
 .preview-metrics svg,.preview-mic svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex-shrink:0; }
 .preview-metrics strong { font-weight:500; font-variant-numeric:tabular-nums; }
