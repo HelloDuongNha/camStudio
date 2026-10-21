@@ -368,7 +368,7 @@ async function publishCloud(value, run) {
               $('#sentFpsLabel').textContent = Number.isFinite(report.framesSent) ? 'Gửi' : 'Mã hoá';
               $('#sentFps').textContent = `${sent.toFixed(1)} fps`;
               const mbps = (report.bytesSent - previous.bytesSent) * 8 / elapsed / 1000000;
-              $('#relayStatus').textContent = `Cloud · ${report.frameWidth || relayCanvas.width}×${report.frameHeight || relayCanvas.height} · ${fps.toFixed(0)} fps · ${mbps.toFixed(1)} Mb/s`;
+              $('#relayStatus').textContent = `Cloud · ${report.frameWidth || relayCanvas.width}×${report.frameHeight || relayCanvas.height} · ${mbps.toFixed(1)} Mb/s`;
             }
             previous = report;
           });
@@ -410,7 +410,7 @@ async function publishUsb(value, run) {
       if (performance.now() - measuredAt >= 1000) {
         $('#sentFpsLabel').textContent = 'Gửi';
         $('#sentFps').textContent = `${(frames * 1000 / (performance.now() - measuredAt)).toFixed(1)} fps`;
-        $('#relayStatus').textContent = `Đang phát qua USB · ${(frames * 1000 / (performance.now() - measuredAt)).toFixed(1)} fps`;
+        $('#relayStatus').textContent = 'Đang phát qua USB';
         measuredAt = performance.now(); frames = 0;
       }
     } catch { consecutiveFailures++; $('#relayStatus').textContent = 'Chưa gửi được qua USB · đang thử lại…'; }
