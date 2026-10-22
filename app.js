@@ -87,10 +87,10 @@ function updateTransport() {
   $('#computerSource').setAttribute('aria-pressed', String(!isUsbMode)); $('#nearSource').setAttribute('aria-pressed', String(isUsbMode));
   $('#audioField').hidden = isUsbMode;
   updateMicrophoneButton();
-  $('#transportHint').textContent = isUsbMode ? 'USB trực tiếp. Mở dịch vụ USB trên máy tính và cắm điện thoại.' : 'Cloud phát hình và tiếng qua LiveKit.';
   $('#passwordCard').hidden = isUsbMode;
   $('#pairButton').textContent = isUsbMode ? 'Kết nối USB' : 'Tạo mã ghép nối ↗';
-  $('#connectHint').textContent = isUsbMode ? 'Cắm cáp và mở CamPOC. USB tự ghép nối, không cần QR hay mật khẩu.' : 'Xem trước nguồn rồi tạo mã Cloud. Đóng mã không tắt nguồn xem trước.';
+  $('#connectHint').hidden = !isUsbMode;
+  $('#connectHint').textContent = 'Mở dịch vụ USB trên máy tính và cắm điện thoại bằng cáp.';
   localStore.setItem('camstudio-transport-v1', isUsbMode ? 'usb' : 'cloud');
   const url = new URL(location.href); url.searchParams.set('transport', isUsbMode ? 'usb' : 'cloud'); history.replaceState(null, '', url);
 }
@@ -296,8 +296,7 @@ function renderPairing(value) {
     : 'Cắm điện thoại qua USB và chọn nguồn USB trong CamPOC. Có thể quét QR bằng chính điện thoại đang cắm cáp.';
   const qr = qrcode(0, 'M'); qr.addData(invitation(value), 'Byte'); qr.make();
   $('#qrCode').innerHTML = qr.createSvgTag({ cellSize: 5, margin: 0, scalable: true });
-  $('#pairButton').textContent = value.transport === 'livekit' ? 'Mở mã ghép nối ↗' : 'USB đang chạy';
-  $('#sessionBadge').textContent = value.connected ? 'Thiết bị đã kết nối' : `Phòng ${value.code || value.room}`;
+  $('#pairButton').textContent = value.transport === 'livekit' ? 'Mở mã ghép nối ↗' : 'Kết nối lại';
   clearInterval(expiryTimer);
   const tick = () => {
     const remaining = Math.max(0, value.expires * 1000 - Date.now());
@@ -309,8 +308,8 @@ function renderPairing(value) {
 function setConnection(connected) {
   if (!session) return;
   session.connected = connected || session.connected;
-  $('#pairingConnection').textContent = session.connected ? '● Thiết bị đã kết nối' : '● Nguồn sẵn sàng · chờ điện thoại';
-  $('#sessionBadge').textContent = session.connected ? 'Thiết bị đã kết nối' : `Phòng ${session.code || session.room}`;
+  $('#pairingConnection').textContent = session.connected ? 'Đã kết nối' : 'Chờ điện thoại';
+  $('#relayStatus').textContent = session.connected ? 'Đã kết nối' : 'Chờ điện thoại';
 }
 async function pollStatus(value, run) {
   try {
@@ -368,7 +367,7 @@ async function publishCloud(value, run) {
               $('#sentFpsLabel').textContent = Number.isFinite(report.framesSent) ? 'Gửi' : 'Mã hoá';
               $('#sentFps').textContent = `${sent.toFixed(1)} fps`;
               const mbps = (report.bytesSent - previous.bytesSent) * 8 / elapsed / 1000000;
-              $('#relayStatus').textContent = `Cloud · ${report.frameWidth || relayCanvas.width}×${report.frameHeight || relayCanvas.height} · ${mbps.toFixed(1)} Mb/s`;
+              $('#relayStatus').textContent = `${session?.connected ? 'Đã kết nối' : 'Chờ điện thoại'} · ${mbps.toFixed(1)} Mb/s`;
             }
             previous = report;
           });
@@ -410,7 +409,7 @@ async function publishUsb(value, run) {
       if (performance.now() - measuredAt >= 1000) {
         $('#sentFpsLabel').textContent = 'Gửi';
         $('#sentFps').textContent = `${(frames * 1000 / (performance.now() - measuredAt)).toFixed(1)} fps`;
-        $('#relayStatus').textContent = 'Đang phát qua USB';
+        $('#relayStatus').textContent = session?.connected ? 'Đã kết nối' : 'Chờ điện thoại';
         measuredAt = performance.now(); frames = 0;
       }
     } catch { consecutiveFailures++; $('#relayStatus').textContent = 'Chưa gửi được qua USB · đang thử lại…'; }
@@ -469,7 +468,7 @@ async function openPairing(replace = false, restart = false) {
     if (run !== generation) { await cancelUnused(obtained); return false; }
     session = obtained;
     if (!isUsbMode) renderPairing(session);
-    else { $('#pairButton').textContent = 'USB đang chạy'; $('#sessionBadge').textContent = 'USB · chờ điện thoại'; }
+    else { $('#pairButton').textContent = 'Kết nối lại'; }
     if (isUsbMode) { publishTask = publishUsb(session, run); }
     else { publishTask = publishCloud(session, run); await publishTask; }
     return true;
@@ -478,7 +477,7 @@ async function openPairing(replace = false, restart = false) {
     if (error.message !== 'cancelled' && run === generation) { showSnackbar(errorMessage(error)); $('#pairingConnection').textContent = errorMessage(error); }
     if (run === generation) {
       stopPublishing();
-      if (hasSource()) $('#relayStatus').textContent = 'Đang xem trước · chưa phát';
+      if (hasSource()) $('#relayStatus').textContent = 'Nguồn sẵn sàng';
       if (obtained) { try { const outcome = await cancelUnused(obtained); if (!outcome.kept) session = undefined; } catch {} }
     }
     return false;
@@ -491,7 +490,7 @@ async function closePairing() {
   try {
     const value = session;
     const result = value ? await cancelUnused(value) : { removed: true };
-    if (!result.kept) { stopPublishing(); session = undefined; clearInterval(expiryTimer); $('#pairButton').textContent = isUsbMode ? 'Kết nối USB' : 'Tạo mã ghép nối ↗'; $('#sessionBadge').textContent = 'Chưa kết nối'; if (hasSource()) $('#relayStatus').textContent = 'Đang xem trước · chưa phát'; }
+    if (!result.kept) { stopPublishing(); session = undefined; clearInterval(expiryTimer); $('#pairButton').textContent = isUsbMode ? 'Kết nối USB' : 'Tạo mã ghép nối ↗'; if (hasSource()) $('#relayStatus').textContent = 'Nguồn sẵn sàng'; }
     else setConnection(true);
     dialog.close();
   } catch { showSnackbar('Chưa xác nhận được trạng thái phòng. Hãy thử đóng lại.'); }
@@ -505,7 +504,7 @@ async function startPreview(restart = false) {
   try {
     if (restart) { stopSource(); }
     await ensureSource(restart ? generation : run);
-    $('#relayStatus').textContent = 'Đang xem trước · chưa phát';
+    $('#relayStatus').textContent = 'Nguồn sẵn sàng';
     return true;
   } catch (error) { if (error.message !== 'cancelled') showSnackbar(errorMessage(error)); return false; }
   finally { previewOpening = false; busy(false); }
@@ -530,7 +529,7 @@ for (const [selector, usb] of [['#computerSource', false], ['#nearSource', true]
     if (session) { try { await cancelUnused(session); } catch { showSnackbar('Chưa đổi được đường truyền. Hãy thử lại.'); return; } }
     stopSource(); session = undefined; clearInterval(expiryTimer); isUsbMode = usb; updateTransport();
     if (dialog.open) dialog.close();
-    $('#pairButton').textContent = usb ? 'Kết nối USB' : 'Tạo mã ghép nối ↗'; $('#sessionBadge').textContent = 'Chưa kết nối';
+    $('#pairButton').textContent = usb ? 'Kết nối USB' : 'Tạo mã ghép nối ↗';
     if (usb) await openPairing(); else await startPreview();
   });
 }

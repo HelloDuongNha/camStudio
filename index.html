@@ -2,15 +2,15 @@
 <html lang="vi" data-theme="dark">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111116">
-  <title>Cam Studio</title><link rel="stylesheet" href="styles.css?v=studio-outside-21">
+  <title>Cam Studio</title><link rel="stylesheet" href="styles.css?v=studio-dedup-22">
 </head>
 <body>
   <aside id="studioRecovery" role="alert" hidden><strong>Studio gặp lỗi tải giao diện.</strong><p>Tải lại để thử lại; nguồn đang mở sẽ dừng.</p><button id="studioReload">Tải lại</button><button id="studioCopyHealth">Sao chép mốc lỗi</button><button id="studioDismiss">Đóng</button><p id="studioHealthStatus"></p></aside>
-  <header class="studio-header"><a class="brand" href="/"><span class="brand-mark">C</span><span><strong>Cam Studio</strong><small>KHÔNG GIAN CỦA BẠN</small></span></a>
+  <header class="studio-header"><a class="brand" href="/"><span class="brand-mark">C</span><span><strong>Cam Studio</strong></span></a>
     <div class="header-actions"><span class="account-email" id="accountEmail"></span><button class="icon-button" id="themeToggle" aria-label="Đổi giao diện">◐</button><button class="button secondary" id="logoutButton">Đăng xuất</button></div>
   </header>
   <main class="studio-shell">
-    <div class="studio-title"><div><p class="eyebrow">CAMERA & OBS</p><h1>Studio của bạn</h1><p>Chọn nguồn, tạo mã và kết nối với điện thoại.</p></div><span class="status-chip" id="sessionBadge">Chưa kết nối</span></div>
+    <div class="studio-title"><div><h1>Studio của bạn</h1></div></div>
     <div class="workspace-grid">
       <section class="card preview-card" aria-labelledby="previewTitle"><div class="card-heading"><h2 id="previewTitle">Khung hình đầu ra</h2><span class="muted" id="previewResolution">Chưa có nguồn</span></div>
         <div class="preview-toolbar"><div class="preview-metrics" aria-label="FPS đo thực tế"><span class="metric-receive" title="Tốc độ nhận từ camera / OBS" aria-label="FPS nhận nguồn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v14m-6-6 6 6 6-6M5 21h14"/></svg><strong id="sourceFps">—</strong></span><span class="metric-display" title="Tốc độ hiển thị khung hình" aria-label="FPS hiển thị"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12 M15 12a3 3 0 1 1-6 0 3 3 0 1 1 6 0"/></svg><strong id="renderFps">—</strong></span><span class="metric-send" title="Tốc độ gửi tới điện thoại" aria-label="FPS gửi"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21V7m-6 6 6-6 6 6M5 3h14"/></svg><span id="sentFpsLabel" class="visually-hidden">Gửi</span><strong id="sentFps">—</strong></span></div></div>
@@ -19,13 +19,13 @@
         <div class="preview-footer"><span class="live-dot" aria-hidden="true"></span><p id="relayStatus" role="status">Chưa mở nguồn</p><button class="button secondary" id="previewButton">Mở xem trước</button><button class="button ghost" id="restartSource" hidden>Thử lại nguồn</button></div>
       </section>
       <aside class="source-stack">
-        <section class="card source-card"><p class="section-kicker">NGUỒN PHÁT</p><h2>Kết nối của bạn</h2>
+        <section class="card source-card"><h2>Nguồn phát</h2>
           <div class="transport-switch" role="group" aria-label="Đường truyền"><button id="computerSource" class="selected" aria-pressed="true"><strong>Camera / OBS</strong><small>Cloud · từ xa</small></button><button id="nearSource" aria-pressed="false"><strong>Kết nối gần</strong><small>USB · trực tiếp</small></button></div>
           <div class="source-controls"><label>Nguồn hình<select id="videoDevice"><option value="">Tự động chọn camera</option></select></label><label id="audioField">Nguồn tiếng<select id="audioDevice"><option value="">Tự động chọn micro</option></select></label>
             <div class="quality-controls"><label>Khung hình<select id="outputResolution"><option value="source">Theo camera / OBS</option><option value="landscape-1080">Ngang · 1920 × 1080</option><option value="portrait-source">Dọc · 1080 × 1920</option></select></label></div>
-          </div><p id="settingsStatus" class="settings-status" role="status">Thay đổi được áp dụng tự động</p><p class="transport-hint" id="transportHint">Cloud phát hình và tiếng qua LiveKit.</p>
+          </div><p id="settingsStatus" class="settings-status" role="status"></p>
         </section>
-        <section class="card connect-card"><p class="section-kicker">GHÉP NỐI THIẾT BỊ</p><h2>Sẵn sàng kết nối?</h2><p id="connectHint">Xem trước nguồn rồi tạo mã Cloud. Chỉ chia sẻ mã với thiết bị của bạn.</p><button class="button primary full-width" id="pairButton">Tạo mã ghép nối <span aria-hidden="true">↗</span></button></section>
+        <section class="card connect-card"><h2>Kết nối điện thoại</h2><p id="connectHint">Xem trước nguồn rồi tạo mã Cloud. Chỉ chia sẻ mã với thiết bị của bạn.</p><button class="button primary full-width" id="pairButton">Tạo mã ghép nối <span aria-hidden="true">↗</span></button></section>
       </aside>
     </div>
   </main>
@@ -43,6 +43,6 @@
     </div>
   </dialog>
   <div class="snackbar" id="snackbar" role="status" hidden><span id="snackbarText"></span><button id="snackbarAction" aria-label="Đóng thông báo">×</button></div>
-  <script src="studio-runtime.js?v=studio-outside-21"></script><script src="vendor/qrcode.js"></script><script src="vendor/livekit-client.umd.js"></script><script src="app.js?v=studio-outside-21"></script>
+  <script src="studio-runtime.js?v=studio-dedup-22"></script><script src="vendor/qrcode.js"></script><script src="vendor/livekit-client.umd.js"></script><script src="app.js?v=studio-dedup-22"></script>
 </body>
 </html>
