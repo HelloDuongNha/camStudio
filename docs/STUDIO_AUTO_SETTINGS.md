@@ -20,3 +20,6 @@ Goal3 (audio USB thành microphone website) chưa bắt đầu. Chờ người d
 
 
 Studio có nút icon micro ở góc dưới phải preview Cloud, đỏ/gạch chéo khi tắt và aria-pressed/tooltip phù hợp. Tắt MediaStreamTrack.enabled để thực sự phát im lặng; đồng bộ LiveKit mute/unmute, giữ trạng thái qua đổi camera/micro, tạo phiên và mở lại nguồn. USB ẩn nút vì chưa có audio USB. Lỗi bật mic giữ trạng thái tắt. Kiểm thử64 test qua, có kiểm tra giữ mute khi publish/đổi thiết bị và lỗi unmute; Chrome riêng dùng tone WAV cho thấy RMS trước0,0187, khi mute0, bật lại0,0095. Canvas dọc có100% pixel có màu tại hàng trên/dưới của nguồn tổng hợp, không có letterbox. Kiểm tra badge góc phải và không tràn ở desktop1440/mobile390.
+
+
+22/10/2026: gộp trạng thái kết nối chính vào footer preview; bỏ badge trạng thái/mã phòng ở tiêu đề và các hướng dẫn trùng. Mã/password chỉ hiện trong bảng ghép nối. Card kết nối chỉ giữ tiêu đề và hành động, USB có một hướng dẫn cắm cáp/dịch vụ thay vì hai đoạn. Mute USB sẽ được thực hiện cùng transport audio Goal3; chưa gắn nút không truyền được âm.

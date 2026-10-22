@@ -397,6 +397,7 @@ select option { background:var(--surface); color:var(--text); }
   color:var(--muted);
   margin:12px 0 20px;
 }
+.connect-card h2 { margin-bottom:14px; }
 .connect-card .button {
   min-height:52px;
   justify-content:space-between;
